@@ -1,15 +1,25 @@
-import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
-import { getDefaultDevUser, getUserByEmail } from "../services/users.js";
+import { getAuthenticatedUserFromRequest } from "../services/auth-sessions.js";
+import { getUserByEmail } from "../services/users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 
 declare module "fastify" {
+  interface FastifyContextConfig {
+    auth?: boolean;
+  }
+
   interface FastifyRequest {
     currentUser: AuthenticatedUser;
   }
 }
 
 async function resolveRequestUser(request: FastifyRequest): Promise<AuthenticatedUser> {
+  const sessionUser = await getAuthenticatedUserFromRequest(request);
+  if (sessionUser) {
+    return sessionUser;
+  }
+
   const headerValue = request.headers["x-dev-user-email"];
   const email =
     typeof headerValue === "string"
@@ -25,17 +35,22 @@ async function resolveRequestUser(request: FastifyRequest): Promise<Authenticate
     }
     return user;
   }
-
-  const defaultUser = await getDefaultDevUser();
-  if (!defaultUser) {
-    throw new Error("No default dev auth user is available.");
-  }
-
-  return defaultUser;
+  throw new Error("Authentication required.");
 }
 
-export const devAuthPlugin: FastifyPluginAsync = async (app: FastifyInstance) => {
+export async function devAuthPlugin(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request) => {
-    request.currentUser = await resolveRequestUser(request);
+    if (request.routeOptions.config.auth === false) {
+      return;
+    }
+
+    try {
+      request.currentUser = await resolveRequestUser(request);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Authentication required.";
+      const unauthorizedError = new Error(detail) as Error & { statusCode: number };
+      unauthorizedError.statusCode = 401;
+      throw unauthorizedError;
+    }
   });
-};
+}

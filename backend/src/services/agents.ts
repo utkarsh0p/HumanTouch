@@ -4,6 +4,7 @@ import { settings } from "../config.js";
 import { defaultAdminUserId, defaultCompanyId } from "../constants/seed.js";
 import { query } from "../db/postgres.js";
 import { compileAgentSystemPrompt } from "../langgraph/agent-prompt-compiler.js";
+import { getUsersByEmails } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type { AgentCreatePayload, AgentInfo, AgentRecord } from "../types/agents.js";
 
@@ -31,6 +32,18 @@ function normalizeStringList(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function normalizeEmailList(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))];
+}
+
+function fallbackWorkspaceObjective(name: string): string {
+  return `Own the ${name} workspace and help users complete its assigned work clearly and safely.`;
+}
+
+function deriveRoleFromName(name: string): string {
+  return `${name} assistant`;
+}
+
 async function buildUniqueSlug(name: string): Promise<string> {
   const baseSlug = slugify(name) || "agent";
   const matches = await query<{ slug: string }>(
@@ -51,13 +64,27 @@ async function buildUniqueSlug(name: string): Promise<string> {
 }
 
 function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
+  const name = normalizeText(payload.name);
+  const purpose = normalizeText(payload.purpose);
+  const allowedTasks = normalizeText(payload.allowed_tasks);
+  const restrictions = normalizeText(payload.restrictions);
+
   return {
-    role: normalizeText(payload.role),
-    goal: normalizeText(payload.goal),
-    responsibilities: normalizeText(payload.responsibilities),
-    permissions: normalizeText(payload.permissions),
-    guardrails: normalizeText(payload.guardrails),
-    work_style: normalizeText(payload.work_style),
+    role: deriveRoleFromName(name),
+    goal: purpose,
+    responsibilities: allowedTasks,
+    permissions: `Only help with the following approved work:\n${allowedTasks}`,
+    guardrails: restrictions,
+    work_style:
+      "Be clear, practical, concise, and supportive. Optimize for the assigned employee's workflow.",
+    workspace: {
+      mode: "chat",
+      objective: purpose || fallbackWorkspaceObjective(name),
+      primary_deliverables:
+        allowedTasks || "Produce clear, usable outputs inside the assigned workspace.",
+      collaboration_notes:
+        "Support the assigned employee directly, keep context explicit, and surface blockers early.",
+    },
   };
 }
 
@@ -147,8 +174,19 @@ export async function createAgent(
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name);
   const agentInfo = normalizeAgentInfo(payload);
-  const assignedRoles = normalizeStringList(payload.assigned_roles);
-  const assignedUserIds = normalizeStringList(payload.assigned_user_ids ?? []);
+  const assignedRoles = normalizeStringList(payload.assigned_role_keys ?? []);
+  const assignedUserEmails = normalizeEmailList(payload.assigned_user_emails ?? []);
+  const companyId = actor?.company_id ?? defaultCompanyId;
+  const resolvedUsers = await getUsersByEmails(assignedUserEmails, companyId);
+  const resolvedUserIds = normalizeStringList(resolvedUsers.map((user) => user.id));
+  const missingEmails = assignedUserEmails.filter(
+    (email) => !resolvedUsers.some((user) => user.email.toLowerCase() === email),
+  );
+
+  if (missingEmails.length > 0) {
+    throw new Error(`Employee not found for email: ${missingEmails.join(", ")}`);
+  }
+
   const systemPrompt = await compileAgentSystemPrompt(name, agentInfo);
 
   await query(
@@ -171,7 +209,7 @@ export async function createAgent(
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $10, $10)`,
     [
       id,
-      actor?.company_id ?? defaultCompanyId,
+      companyId,
       actor?.id ?? defaultAdminUserId,
       actor?.id ?? defaultAdminUserId,
       name,
@@ -186,21 +224,21 @@ export async function createAgent(
 
   for (const roleKey of assignedRoles) {
     await query(
-      `INSERT INTO ${roleAssignmentsTable}
-       (agent_id, company_id, role_name, role_key, created_at)
-       VALUES ($1, $2, $3, $3, $4)
+     `INSERT INTO ${roleAssignmentsTable}
+       (agent_id, company_id, role_key, created_at)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT DO NOTHING`,
       [id, actor?.company_id ?? defaultCompanyId, roleKey, now],
     );
   }
 
-  for (const userId of assignedUserIds) {
+  for (const userId of resolvedUserIds) {
     await query(
       `INSERT INTO ${userAssignmentsTable}
        (agent_id, company_id, user_id, created_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (agent_id, user_id) DO NOTHING`,
-      [id, actor?.company_id ?? defaultCompanyId, userId, now],
+      [id, companyId, userId, now],
     );
   }
 

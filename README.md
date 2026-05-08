@@ -68,7 +68,6 @@ GEMINI_MODEL=gemini-2.5-pro
 PORT=3001
 ALLOWED_ORIGINS=http://localhost:3000
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
-DEV_AUTH_USER_EMAIL=admin@humantouch.local
 ```
 
 ## Current Backend Scope
@@ -104,15 +103,22 @@ Current status:
 - that bootstrap is now wrapped by a migration bookkeeping table: `humantouch.schema_migrations`
 - future schema changes should be added as new migration entries instead of expanding one giant startup function forever
 
-## Dev Auth
+## Auth
 
-For development, backend routes resolve a real user from the `users` table on each request.
+The backend now supports basic local auth with:
 
-Default behavior:
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
 
-- if `x-dev-user-email` header is present, that user is loaded
-- otherwise the backend falls back to `DEV_AUTH_USER_EMAIL`
-- if that is unset, it falls back to the seeded admin user
+Behavior:
+
+- login/signup issue an `HttpOnly` session cookie
+- logout clears the cookie and deletes the matching server-side session row
+- protected routes read the current user from that cookie
+
+For explicit dev impersonation, you can still send `x-dev-user-email` and the backend will load that user from the `users` table for the request.
 
 Example:
 

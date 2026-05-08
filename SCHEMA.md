@@ -53,6 +53,25 @@ Notes:
 - `email` is used for identity lookup/login.
 - internal access control and assignments should use `user_id`, not email.
 
+### `auth_sessions`
+
+Server-side login sessions for local auth.
+
+Columns:
+
+- `id UUID PRIMARY KEY`
+- `user_id UUID NOT NULL REFERENCES users(id)`
+- `token_hash TEXT NOT NULL UNIQUE`
+- `expires_at TIMESTAMPTZ NOT NULL`
+- `created_at TIMESTAMPTZ NOT NULL`
+- `last_seen_at TIMESTAMPTZ NOT NULL`
+
+Notes:
+
+- the browser stores only an opaque session token in an `HttpOnly` cookie
+- the database stores a SHA-256 hash of that token, not the raw token
+- logout deletes the matching row so sessions are revocable server-side
+
 ### `agents`
 
 The canonical agent definition table.
@@ -88,6 +107,30 @@ Those are treated as migration support only. The canonical source of truth is:
 
 - `agent_info`
 - `system_prompt`
+
+Recommended `agent_info` structure:
+
+- `role TEXT`
+- `goal TEXT`
+- `responsibilities TEXT`
+- `permissions TEXT`
+- `guardrails TEXT`
+- `work_style TEXT`
+- `workspace JSON`
+
+Recommended `workspace` structure:
+
+- `mode TEXT`
+  expected values today: `chat`, `agentic`
+- `objective TEXT`
+- `primary_deliverables TEXT`
+- `collaboration_notes TEXT`
+
+Notes:
+
+- keep runtime-critical prompt inputs in `agent_info` so `system_prompt` can always be regenerated
+- keep early agent workspace configuration in `agent_info.workspace` until runs, artifacts, and tool policies justify dedicated tables
+- if the future agentic workspace gains stateful execution or artifacts, model that separately from conversation history
 
 ### `agent_role_assignments`
 
@@ -164,14 +207,13 @@ Runtime prompt order:
 
 ## Prompt Generation
 
-Agent creation/update uses structured fields:
+Agent creation/update should use a nested contract:
 
-- `role`
-- `goal`
-- `responsibilities`
-- `permissions`
-- `guardrails`
-- `work_style`
+- `name`
+- `agent_info`
+  `role`, `goal`, `responsibilities`, `permissions`, `guardrails`, `work_style`, `workspace`
+- `assignments`
+  `role_keys`, `user_ids`
 
 These are assembled into `agent_info`, and a generated `system_prompt` is stored for runtime use.
 

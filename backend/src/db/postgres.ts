@@ -8,6 +8,8 @@ import {
 } from "../constants/seed.js";
 import { runMigrations } from "./migrations.js";
 import { buildAgentContext } from "../services/agent-context.js";
+import { hashPassword } from "../services/passwords.js";
+import type { AgentInfo } from "../types/agents.js";
 
 const pool = new Pool({
   connectionString: settings.databaseUrl,
@@ -366,6 +368,57 @@ async function initializeDatabase(): Promise<void> {
   `);
 }
 
+async function addAuthSessionsTable(): Promise<void> {
+  const appSchema = quoteIdentifier(settings.appSchema);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${appSchema}.auth_sessions (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES ${appSchema}.users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS auth_sessions_user_id_idx
+    ON ${appSchema}.auth_sessions (user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx
+    ON ${appSchema}.auth_sessions (expires_at)
+  `);
+}
+
+async function updateSeededAdminCredentials(): Promise<void> {
+  const appSchema = quoteIdentifier(settings.appSchema);
+  const adminPasswordHash = hashPassword("utkarshsingh");
+
+  await pool.query(
+    `
+      UPDATE ${appSchema}.users
+      SET
+        email = $2,
+        full_name = $3,
+        role_key = 'admin',
+        is_admin = TRUE,
+        auth_provider = 'local',
+        password_hash = $4,
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+    [
+      defaultAdminUserId,
+      "utkarshsingh@gmail.com",
+      "Utkarsh Singh",
+      adminPasswordHash,
+    ],
+  );
+}
+
 async function seedDefaultCompanyAndUser(appSchema: string): Promise<void> {
   const now = new Date();
 
@@ -441,13 +494,50 @@ async function backfillAgents(appSchema: string): Promise<void> {
   );
 
   for (const agent of agents.rows) {
-    const agentInfo = {
+    const existingWorkspace =
+      agent.agent_info && typeof agent.agent_info === "object" && "workspace" in agent.agent_info
+        ? (agent.agent_info as { workspace?: unknown }).workspace
+        : null;
+    const agentInfo: AgentInfo = {
       role: agent.role,
       goal: agent.goal,
       responsibilities: agent.responsibilities,
       permissions: agent.permissions,
       guardrails: agent.guardrails,
       work_style: agent.work_style,
+      workspace: {
+        mode:
+          existingWorkspace &&
+          typeof existingWorkspace === "object" &&
+          "mode" in existingWorkspace &&
+          existingWorkspace.mode === "agentic"
+            ? "agentic"
+            : "chat",
+        objective:
+          existingWorkspace &&
+          typeof existingWorkspace === "object" &&
+          "objective" in existingWorkspace &&
+          typeof existingWorkspace.objective === "string" &&
+          existingWorkspace.objective.trim()
+            ? existingWorkspace.objective
+            : `Own the ${agent.name} workspace and help users complete its assigned work clearly and safely.`,
+        primary_deliverables:
+          existingWorkspace &&
+          typeof existingWorkspace === "object" &&
+          "primary_deliverables" in existingWorkspace &&
+          typeof existingWorkspace.primary_deliverables === "string" &&
+          existingWorkspace.primary_deliverables.trim()
+            ? existingWorkspace.primary_deliverables
+            : "Produce clear, usable outputs inside the assigned workspace.",
+        collaboration_notes:
+          existingWorkspace &&
+          typeof existingWorkspace === "object" &&
+          "collaboration_notes" in existingWorkspace &&
+          typeof existingWorkspace.collaboration_notes === "string" &&
+          existingWorkspace.collaboration_notes.trim()
+            ? existingWorkspace.collaboration_notes
+            : "Collaborate in a structured way, keep context explicit, and surface blockers early.",
+      },
     };
     const systemPrompt =
       agent.system_prompt.trim() || buildAgentContext(agent.name, agentInfo);
@@ -547,7 +637,7 @@ async function backfillMessages(appSchema: string): Promise<void> {
 
 async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   const now = new Date();
-  const agentInfo = {
+  const agentInfo: AgentInfo = {
     role: "Admin",
     goal: "Manage HumanTouch agent operations for the company, plan work, and oversee system use.",
     responsibilities:
@@ -558,6 +648,15 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
       "Do not claim to have permissions that are not explicitly available. Do not take sensitive external actions without approval. Stay inside product and operational scope.",
     work_style:
       "Be concise, practical, structured, and operationally focused. Surface assumptions and risks clearly.",
+    workspace: {
+      mode: "agentic" as const,
+      objective:
+        "Operate the admin workspace for HumanTouch and help manage agent setup, review, and operational decisions.",
+      primary_deliverables:
+        "Produce plans, agent definitions, prompt guidance, and operational recommendations that the admin can act on.",
+      collaboration_notes:
+        "Work as an operational partner for the admin, keep assumptions explicit, and suggest next actions clearly.",
+    },
   };
   const systemPrompt = buildAgentContext("Admin", agentInfo);
 
@@ -629,8 +728,8 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   await pool.query(
     `
       INSERT INTO ${appSchema}.agent_role_assignments
-      (agent_id, company_id, role_name, role_key, created_at)
-      VALUES ($1, $2, 'admin', 'admin', $3)
+      (agent_id, company_id, role_key, created_at)
+      VALUES ($1, $2, 'admin', $3)
       ON CONFLICT DO NOTHING
     `,
     [defaultAdminAgentId, defaultCompanyId, now],
@@ -657,6 +756,14 @@ export async function connectToPostgres(): Promise<void> {
       {
         id: "001_initial_humantouch_schema",
         run: initializeDatabase,
+      },
+      {
+        id: "002_auth_sessions",
+        run: addAuthSessionsTable,
+      },
+      {
+        id: "003_seed_default_admin_credentials",
+        run: updateSeededAdminCredentials,
       },
     ]);
   }

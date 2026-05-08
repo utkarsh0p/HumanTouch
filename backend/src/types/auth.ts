@@ -6,3 +6,7 @@ export type AuthenticatedUser = {
   role_key: string;
   is_admin: boolean;
 };
+
+export type UserWithPasswordHash = AuthenticatedUser & {
+  password_hash: string | null;
+};

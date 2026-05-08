@@ -6,14 +6,11 @@ import { createAgent } from "../services/agents.js";
 
 const createAgentSchema = z.object({
   name: z.string().trim().min(1),
-  role: z.string().trim().min(1),
-  goal: z.string().trim().min(1),
-  responsibilities: z.string().trim().min(1),
-  permissions: z.string().trim().min(1),
-  guardrails: z.string().trim().min(1),
-  work_style: z.string().trim().min(1),
-  assigned_roles: z.array(z.string().trim().min(1)).default([]),
-  assigned_user_ids: z.array(z.string().uuid()).default([]),
+  purpose: z.string().trim().min(1),
+  allowed_tasks: z.string().trim().min(1),
+  restrictions: z.string().trim().min(1),
+  assigned_role_keys: z.array(z.string().trim().min(1)).default([]),
+  assigned_user_emails: z.array(z.string().trim().email()).default([]),
 });
 
 export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {

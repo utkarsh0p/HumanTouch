@@ -4,6 +4,27 @@ import { resolve } from "node:path";
 import dotenv from "dotenv";
 import { z } from "zod";
 
+function expandAllowedOrigins(origins: string[]): string[] {
+  const expanded = new Set<string>();
+
+  for (const origin of origins) {
+    expanded.add(origin);
+
+    try {
+      const url = new URL(origin);
+      if (url.hostname === "localhost") {
+        expanded.add(`${url.protocol}//127.0.0.1${url.port ? `:${url.port}` : ""}`);
+      } else if (url.hostname === "127.0.0.1") {
+        expanded.add(`${url.protocol}//localhost${url.port ? `:${url.port}` : ""}`);
+      }
+    } catch {
+      expanded.add(origin);
+    }
+  }
+
+  return [...expanded];
+}
+
 const envCandidates = [
   resolve(process.cwd(), ".env"),
   resolve(process.cwd(), "..", ".env"),
@@ -25,7 +46,6 @@ const envSchema = z
     GOOGLE_API_KEY: z.string().optional(),
     GEMINI_MODEL: z.string().min(1).default("gemini-2.5-pro"),
     ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
-    DEV_AUTH_USER_EMAIL: z.string().optional(),
   })
   .transform((env) => {
     const googleApiKey = env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY;
@@ -41,10 +61,11 @@ const envSchema = z
       langgraphSchema: env.LANGGRAPH_DB_SCHEMA,
       googleApiKey,
       geminiModel: env.GEMINI_MODEL,
-      devAuthUserEmail: env.DEV_AUTH_USER_EMAIL,
-      allowedOrigins: env.ALLOWED_ORIGINS.split(",")
-        .map((origin) => origin.trim())
-        .filter(Boolean),
+      allowedOrigins: expandAllowedOrigins(
+        env.ALLOWED_ORIGINS.split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      ),
     };
   });
 

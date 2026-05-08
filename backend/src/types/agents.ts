@@ -1,3 +1,12 @@
+export type AgentWorkspaceMode = "chat" | "agentic";
+
+export type AgentWorkspaceInfo = {
+  mode: AgentWorkspaceMode;
+  objective: string;
+  primary_deliverables: string;
+  collaboration_notes: string;
+};
+
 export type AgentInfo = {
   role: string;
   goal: string;
@@ -5,6 +14,7 @@ export type AgentInfo = {
   permissions: string;
   guardrails: string;
   work_style: string;
+  workspace: AgentWorkspaceInfo;
 };
 
 export type AgentRecord = {
@@ -27,12 +37,9 @@ export type AgentRecord = {
 
 export type AgentCreatePayload = {
   name: string;
-  role: string;
-  goal: string;
-  responsibilities: string;
-  permissions: string;
-  guardrails: string;
-  work_style: string;
-  assigned_roles: string[];
-  assigned_user_ids?: string[];
+  purpose: string;
+  allowed_tasks: string;
+  restrictions: string;
+  assigned_role_keys?: string[];
+  assigned_user_emails?: string[];
 };

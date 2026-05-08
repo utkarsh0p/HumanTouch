@@ -13,10 +13,12 @@ import { canUserAccessAgent, canUserAccessSession } from "../services/access.js"
 import { getAgentById } from "../services/agents.js";
 import type { MessageRecord, SessionRecord } from "../types/chat.js";
 
+const uuidLikeSchema = z.string().regex(/^[0-9a-fA-F-]{36}$/);
+
 const createSessionSchema = z
   .object({
     title: z.string().trim().min(1).optional(),
-    agent_id: z.string().uuid().optional(),
+    agent_id: uuidLikeSchema.optional(),
     user_prompt: z.string().trim().min(1).optional(),
   })
   .optional();
@@ -27,13 +29,22 @@ const threadIdSchema = z.object({
 
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/sessions", async (request) => {
-    const sessions = await query<SessionRecord>(
-      `SELECT thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used
-       FROM "${settings.appSchema}".agent_sessions
-       WHERE company_id = $1
-       ORDER BY updated_at DESC`,
-      [request.currentUser.company_id],
-    );
+    const sessions = request.currentUser.is_admin
+      ? await query<SessionRecord>(
+          `SELECT thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used
+           FROM "${settings.appSchema}".agent_sessions
+           WHERE company_id = $1
+           ORDER BY updated_at DESC`,
+          [request.currentUser.company_id],
+        )
+      : await query<SessionRecord>(
+          `SELECT thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used
+           FROM "${settings.appSchema}".agent_sessions
+           WHERE company_id = $1
+             AND created_by_user_id = $2
+           ORDER BY updated_at DESC`,
+          [request.currentUser.company_id, request.currentUser.id],
+        );
 
     return sessions satisfies SessionRecord[];
   });

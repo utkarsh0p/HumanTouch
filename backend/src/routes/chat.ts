@@ -4,6 +4,7 @@ import { z } from "zod";
 import { settings } from "../config.js";
 import { query } from "../db/postgres.js";
 import { createUserInput, extractText, getAgentGraph } from "../langgraph/admin-agent.js";
+import { generateSessionTitle } from "../langgraph/session-title.js";
 import { canUserAccessSession } from "../services/access.js";
 import { getAgentById } from "../services/agents.js";
 
@@ -57,18 +58,31 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       [payload.thread_id, session.company_id, "user", payload.message, now],
     );
 
+    const nextTitle =
+      session.title === "New session"
+        ? await generateSessionTitle(payload.message)
+        : session.title || "New session";
+
     await query(
       `UPDATE ${sessionTable}
        SET title = $2, updated_at = $3
        WHERE thread_id = $1`,
-      [payload.thread_id, session.title || "New session", now],
+      [payload.thread_id, nextTitle, now],
     );
 
     reply.hijack();
+    const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      ...(origin
+        ? {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            Vary: "Origin",
+          }
+        : {}),
     });
 
     const assistantParts: string[] = [];
@@ -126,6 +140,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       writeSseEvent(reply.raw, "done", {
         thread_id: payload.thread_id,
         message: assistantText,
+        title: nextTitle,
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Streaming failed.";

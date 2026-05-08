@@ -5,6 +5,7 @@ import { settings } from "./config.js";
 import { connectToPostgres } from "./db/postgres.js";
 import { devAuthPlugin } from "./plugins/dev-auth.js";
 import { registerAgentRoutes } from "./routes/agents.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 
@@ -16,10 +17,11 @@ await app.register(cors, {
   origin: settings.allowedOrigins,
   credentials: true,
 });
-await app.register(devAuthPlugin);
+await devAuthPlugin(app);
 
 app.get("/health", async () => ({ status: "ok" }));
 
+await registerAuthRoutes(app);
 await registerSessionRoutes(app);
 await registerAgentRoutes(app);
 await registerChatRoutes(app);
