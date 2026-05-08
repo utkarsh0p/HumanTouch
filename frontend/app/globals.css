@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/69971989be3c6573c3128fd9_AnthropicSans-Roman-Web.woff2")
+    format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 300 800;
+}
+
+@font-face {
+  font-family: "Anthropic Serif";
+  src: url("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/6997199fab1923a705f0042d_AnthropicSerif-Roman-Web.woff2")
+    format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 300 800;
+}
+
+@font-face {
+  font-family: "Anthropic Mono";
+  src: url("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/699719b721a24ad1b6ce2c47_AnthropicMono-Roman-Web.woff2")
+    format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 300 800;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  color-scheme: dark;
+  --background: #1b1a17;
+  --foreground: #d8d1c4;
+  --card: #2a2824;
+  --card-foreground: #e9e2d6;
+  --popover: #24211d;
+  --popover-foreground: #ece5d9;
+  --primary: #f1ede6;
+  --primary-foreground: #171613;
+  --secondary: #322f2a;
+  --secondary-foreground: #ddd5c8;
+  --muted: #2b2925;
+  --muted-foreground: #8f8778;
+  --accent: #37332d;
+  --accent-foreground: #e9e2d6;
+  --destructive: #d97757;
+  --destructive-foreground: #fff4ec;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: rgba(241, 237, 230, 0.32);
+  --font-ui: "Anthropic Sans", Arial, sans-serif;
+  --font-display: "Anthropic Serif", Georgia, serif;
+  --font-mono: "Anthropic Mono", "JetBrains Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: rgba(217, 119, 87, 0.25);
+}
