@@ -98,8 +98,17 @@ Future state:
 - employees only see agents assigned to them
 - agent prompt generation can become more sophisticated without changing the runtime model
 - auth/login can move from dev auth to full production auth
+- the built-in `Admin` agent may later act as a coordinator that assigns work to other company agents, gathers their outputs, and returns a consolidated result to the human admin
 
 Design the data model so agent definitions remain separate from conversation history.
+
+Future orchestration direction:
+
+- keep human-to-agent chat as the initial UX
+- later support admin-to-admin-agent orchestration across multiple subordinate agents
+- treat delegated multi-agent work as a separate orchestration or run model, not as a replacement for normal chat sessions
+- keep permissions explicit so the coordinating `Admin` agent can only delegate within the company's allowed agent set
+- preserve a clean separation between agent definitions, conversation history, and future delegated work execution records
 
 ## Expected UX
 
@@ -150,6 +159,7 @@ Do not add these in the initial MVP unless explicitly requested:
 - MCP integrations
 - vector search / RAG
 - additional built-in agents beyond `admin`
+- full multi-agent delegation workflows in the first release
 
 Also avoid these unless explicitly requested:
 
@@ -181,3 +191,4 @@ Unless changed, build around this assumption:
 - sessions and history are first-class features
 - PostgreSQL is the system of record
 - the architecture should be ready to later reuse parent-app users, roles, and company data
+- a later phase may allow the `Admin` agent to break work into sub-tasks for other agents and collect the results centrally

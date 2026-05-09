@@ -8,6 +8,8 @@ The current goal is to let a company admin manage real agent records, assign acc
 
 The larger goal is to make this system integration-ready so it can be attached to a bigger existing product that already has its own users, roles, company data, and PostgreSQL database.
 
+In a near-future phase, the built-in `Admin` agent should be able to coordinate work across other company agents by assigning sub-tasks, collecting their outputs, and presenting a combined result back to the human admin.
+
 ## What The Project Is Approaching
 
 - a modular agent backend in `Node.js` + `TypeScript`
@@ -17,6 +19,7 @@ The larger goal is to make this system integration-ready so it can be attached t
 - `PostgreSQL` as the system of record
 - `SSE` for assistant response streaming
 - a frontend that is simple now but leaves room for future multi-agent management
+- an orchestration path where the `Admin` agent can later operate as a manager over subordinate agents
 
 ## Current Shape
 
@@ -28,6 +31,14 @@ The larger goal is to make this system integration-ready so it can be attached t
 - multiple backend-persisted chat sessions
 - session restore in the UI
 - future-ready structure for real employee login and multi-company separation
+
+## Near-Future Direction
+
+- keep the current MVP centered on direct chat and admin management
+- extend the built-in `Admin` agent into a coordinator for delegated agent work
+- allow the admin agent to assign work only to agents inside the same company scope
+- keep delegated execution separate from ordinary chat history so future task tracking can evolve cleanly
+- preserve strict access control and explicit orchestration boundaries as multi-agent behavior is introduced
 
 ## Integration Intent
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
@@ -113,6 +113,147 @@ function resolveApiBaseUrl(): string {
 }
 
 const apiBaseUrl = resolveApiBaseUrl();
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let index = 0;
+  let key = 0;
+
+  while (index < text.length) {
+    if (text.startsWith("**", index)) {
+      const closingIndex = text.indexOf("**", index + 2);
+      if (closingIndex !== -1) {
+        const content = text.slice(index + 2, closingIndex);
+        nodes.push(<strong key={`strong-${key++}`}>{renderInlineMarkdown(content)}</strong>);
+        index = closingIndex + 2;
+        continue;
+      }
+    }
+
+    if (text[index] === "*") {
+      const closingIndex = text.indexOf("*", index + 1);
+      if (closingIndex !== -1) {
+        const content = text.slice(index + 1, closingIndex);
+        nodes.push(<em key={`em-${key++}`}>{renderInlineMarkdown(content)}</em>);
+        index = closingIndex + 1;
+        continue;
+      }
+    }
+
+    if (text[index] === "`") {
+      const closingIndex = text.indexOf("`", index + 1);
+      if (closingIndex !== -1) {
+        const content = text.slice(index + 1, closingIndex);
+        nodes.push(
+          <code
+            key={`code-${key++}`}
+            className="rounded-md bg-[#2b2824] px-1.5 py-0.5 text-[0.88em] text-[#f1e6d4]"
+          >
+            {content}
+          </code>,
+        );
+        index = closingIndex + 1;
+        continue;
+      }
+    }
+
+    let nextIndex = index + 1;
+    while (
+      nextIndex < text.length &&
+      !text.startsWith("**", nextIndex) &&
+      text[nextIndex] !== "*" &&
+      text[nextIndex] !== "`"
+    ) {
+      nextIndex += 1;
+    }
+
+    nodes.push(<Fragment key={`text-${key++}`}>{text.slice(index, nextIndex)}</Fragment>);
+    index = nextIndex;
+  }
+
+  return nodes;
+}
+
+function renderAssistantMarkdown(content: string): ReactNode {
+  const lines = content.split("\n");
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  let key = 0;
+
+  while (index < lines.length) {
+    const currentLine = lines[index];
+    const trimmedLine = currentLine.trim();
+
+    if (!trimmedLine) {
+      index += 1;
+      continue;
+    }
+
+    const orderedMatch = trimmedLine.match(/^\d+\.\s+(.*)$/);
+    const unorderedMatch = trimmedLine.match(/^[-*]\s+(.*)$/);
+
+    if (orderedMatch) {
+      const items: ReactNode[] = [];
+      while (index < lines.length) {
+        const match = lines[index].trim().match(/^\d+\.\s+(.*)$/);
+        if (!match) {
+          break;
+        }
+        items.push(<li key={`oli-${key++}`}>{renderInlineMarkdown(match[1])}</li>);
+        index += 1;
+      }
+      blocks.push(
+        <ol
+          key={`ol-${key++}`}
+          className="list-decimal space-y-1.5 pl-6 marker:text-[#9f9788]"
+        >
+          {items}
+        </ol>,
+      );
+      continue;
+    }
+
+    if (unorderedMatch) {
+      const items: ReactNode[] = [];
+      while (index < lines.length) {
+        const match = lines[index].trim().match(/^[-*]\s+(.*)$/);
+        if (!match) {
+          break;
+        }
+        items.push(<li key={`uli-${key++}`}>{renderInlineMarkdown(match[1])}</li>);
+        index += 1;
+      }
+      blocks.push(
+        <ul key={`ul-${key++}`} className="list-disc space-y-1.5 pl-6 marker:text-[#9f9788]">
+          {items}
+        </ul>,
+      );
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (index < lines.length) {
+      const nextTrimmed = lines[index].trim();
+      if (
+        !nextTrimmed ||
+        /^\d+\.\s+/.test(nextTrimmed) ||
+        /^[-*]\s+/.test(nextTrimmed)
+      ) {
+        break;
+      }
+      paragraphLines.push(nextTrimmed);
+      index += 1;
+    }
+
+    blocks.push(
+      <p key={`p-${key++}`} className="leading-6">
+        {renderInlineMarkdown(paragraphLines.join(" "))}
+      </p>,
+    );
+  }
+
+  return <div className="space-y-3">{blocks}</div>;
+}
 
 export default function HomePage() {
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
@@ -1147,8 +1288,8 @@ export default function HomePage() {
                 ) : null}
               </div>
 
-              <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5 pr-1">
-                <section className="rounded-[1.4rem] border border-white/8 bg-[#22201c] px-3 py-3">
+              <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5 overflow-hidden pr-1">
+                <section className="flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[1.4rem] border border-white/8 bg-[#22201c] px-3 py-3">
                   <div className="flex items-center justify-between px-2">
                     <div>
                       <p className="text-[0.82rem] text-[#8b8477]">Agents</p>
@@ -1174,51 +1315,53 @@ export default function HomePage() {
                     ) : null}
                   </div>
                   {isAgentListOpen ? (
-                    <div className="mt-3 space-y-1 border-t border-white/8 pt-3">
-                      {agents.map((agent) => {
-                        const isSelected = agent.id === sidebarSelectionAgentId;
+                    <div className="mt-3 min-h-0 border-t border-white/8 pt-3">
+                      <div className="max-h-[34vh] space-y-1 overflow-y-auto px-2 pr-3 ht-scroll-region lg:max-h-[38vh]">
+                        {agents.map((agent) => {
+                          const isSelected = agent.id === sidebarSelectionAgentId;
 
-                        return (
-                          <button
-                            key={agent.id}
-                            className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${
-                              isSelected
-                                ? "bg-[#2a2723] text-[#f1eadc]"
-                                : "text-[#b8b0a2] hover:bg-white/5"
-                            }`}
-                            onClick={() => {
-                              setSelectedAgentId(agent.id);
-                              setActiveThreadId(null);
-                              setMessages([]);
-                              setIsAgentListOpen(false);
-                              closeMobileSidebar();
-                            }}
-                            type="button"
-                          >
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
-                              <Bot className="size-3.5" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[0.9rem]">{agent.name}</span>
-                              <span className="block truncate text-[11px] text-[#8f8778]">
-                                {agent.agent_info.role || "Assigned agent"} ·{" "}
-                                {agent.agent_info.workspace?.mode ?? "chat"}
+                          return (
+                            <button
+                              key={agent.id}
+                              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${
+                                isSelected
+                                  ? "bg-[#2a2723] text-[#f1eadc]"
+                                  : "text-[#b8b0a2] hover:bg-white/5"
+                              }`}
+                              onClick={() => {
+                                setSelectedAgentId(agent.id);
+                                setActiveThreadId(null);
+                                setMessages([]);
+                                setIsAgentListOpen(false);
+                                closeMobileSidebar();
+                              }}
+                              type="button"
+                            >
+                              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
+                                <Bot className="size-3.5" />
                               </span>
-                            </span>
-                            {agent.is_system ? (
-                              <span className="text-[10px] uppercase tracking-[0.18em] text-[#8f8778]">
-                                System
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[0.9rem]">{agent.name}</span>
+                                <span className="block truncate text-[11px] text-[#8f8778]">
+                                  {agent.agent_info.role || "Assigned agent"} ·{" "}
+                                  {agent.agent_info.workspace?.mode ?? "chat"}
+                                </span>
                               </span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
+                              {agent.is_system ? (
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-[#8f8778]">
+                                  System
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
 
-                      {!isAgentsLoading && agents.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-[#8b8477]">
-                          No assigned agents yet.
-                        </div>
-                      ) : null}
+                        {!isAgentsLoading && agents.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-[#8b8477]">
+                            No assigned agents yet.
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
                 </section>
@@ -1366,7 +1509,7 @@ export default function HomePage() {
                 </section>
               </div>
 
-              <div className="mt-5 rounded-[1.5rem] border border-white/8 bg-[#22201c] px-4 py-4">
+              <div className="mt-5 shrink-0 rounded-[1.5rem] border border-white/8 bg-[#22201c] px-4 py-4">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2d2924] text-[#e6dfd1]">
                     <UserCircle2 className="size-4" />
@@ -1449,10 +1592,19 @@ export default function HomePage() {
                           <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-[#8e8678]">
                             {message.role}
                           </p>
-                          <p className="whitespace-pre-wrap text-[0.94rem] leading-6 text-[#ddd7ca]">
-                            {message.content ||
-                              (isSending && index === messages.length - 1 ? "..." : "")}
-                          </p>
+                          {message.role === "assistant" ? (
+                            <div className="text-[0.94rem] text-[#ddd7ca]">
+                              {renderAssistantMarkdown(
+                                message.content ||
+                                  (isSending && index === messages.length - 1 ? "..." : ""),
+                              )}
+                            </div>
+                          ) : (
+                            <p className="whitespace-pre-wrap text-[0.94rem] leading-6 text-[#ddd7ca]">
+                              {message.content ||
+                                (isSending && index === messages.length - 1 ? "..." : "")}
+                            </p>
+                          )}
                         </article>
                       ))}
                       <div aria-hidden="true" className="h-px w-full" />
