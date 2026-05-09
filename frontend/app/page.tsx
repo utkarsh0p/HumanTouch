@@ -6,6 +6,7 @@ import {
   Bot,
   LogOut,
   Menu,
+  MoreHorizontal,
   PanelLeftClose,
   Paperclip,
   Plus,
@@ -137,7 +138,14 @@ export default function HomePage() {
   const [employeeEmailDraft, setEmployeeEmailDraft] = useState("");
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionTitle, setEditingSessionTitle] = useState("");
+  const [isRenamingSession, setIsRenamingSession] = useState(false);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [pendingDeleteSession, setPendingDeleteSession] = useState<Session | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const sessionMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void loadCurrentUser();
@@ -180,6 +188,21 @@ export default function HomePage() {
     return () => window.removeEventListener("resize", syncSidebarForViewport);
   }, [currentUser]);
 
+  useEffect(() => {
+    if (!openSessionMenuId) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!sessionMenuRef.current?.contains(event.target as Node)) {
+        setOpenSessionMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [openSessionMenuId]);
+
   function resetWorkspace() {
     setAgents([]);
     setSelectedAgentId(null);
@@ -190,6 +213,10 @@ export default function HomePage() {
     setFiles([]);
     setIsAgentFormOpen(false);
     setIsMobileSidebarOpen(false);
+    setOpenSessionMenuId(null);
+    setEditingSessionId(null);
+    setEditingSessionTitle("");
+    setPendingDeleteSession(null);
     resetCreateAgentForm();
   }
 
@@ -215,12 +242,16 @@ export default function HomePage() {
     setEmployeeEmailDraft("");
   }
 
-  function formatRoleLabel(roleKey: string) {
-    if (!roleKey) {
-      return "";
-    }
+  function startRenamingSession(session: Session) {
+    setEditingSessionId(session.thread_id);
+    setEditingSessionTitle(session.title);
+    setOpenSessionMenuId(null);
+  }
 
-    return roleKey.charAt(0).toUpperCase() + roleKey.slice(1);
+  function cancelRenamingSession() {
+    setEditingSessionId(null);
+    setEditingSessionTitle("");
+    setIsRenamingSession(false);
   }
 
   async function apiFetch(path: string, init?: RequestInit) {
@@ -456,6 +487,88 @@ export default function HomePage() {
       setError(
         createError instanceof Error ? createError.message : "Failed to create session.",
       );
+    }
+  }
+
+  async function renameSession(threadId: string) {
+    if (!editingSessionTitle.trim() || isRenamingSession) {
+      return;
+    }
+
+    setError(null);
+    setIsRenamingSession(true);
+
+    try {
+      const response = await apiFetch(`/api/sessions/${threadId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: editingSessionTitle.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Failed to rename session."));
+      }
+
+      const updatedSession = (await response.json()) as Session;
+      setSessions((current) =>
+        current.map((session) =>
+          session.thread_id === updatedSession.thread_id ? updatedSession : session,
+        ),
+      );
+      cancelRenamingSession();
+    } catch (renameError) {
+      setError(
+        renameError instanceof Error ? renameError.message : "Failed to rename session.",
+      );
+    } finally {
+      setIsRenamingSession(false);
+    }
+  }
+
+  function promptDeleteSession(session: Session) {
+    if (!currentUser?.is_admin) {
+      return;
+    }
+
+    setOpenSessionMenuId(null);
+    setPendingDeleteSession(session);
+  }
+
+  async function deleteSession(threadId: string) {
+    if (!currentUser?.is_admin || deletingSessionId) {
+      return;
+    }
+
+    setError(null);
+    setDeletingSessionId(threadId);
+    setOpenSessionMenuId(null);
+
+    try {
+      const response = await apiFetch(`/api/sessions/${threadId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Failed to delete session."));
+      }
+
+      const remainingSessions = sessions.filter((session) => session.thread_id !== threadId);
+      setSessions(remainingSessions);
+
+      if (activeThreadId === threadId) {
+        const nextSession = remainingSessions[0] ?? null;
+        setActiveThreadId(nextSession?.thread_id ?? null);
+        setSelectedAgentId(nextSession?.agent_id ?? selectedAgentId);
+        setMessages([]);
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete session.",
+      );
+    } finally {
+      setDeletingSessionId(null);
+      setPendingDeleteSession(null);
     }
   }
 
@@ -699,17 +812,141 @@ export default function HomePage() {
 
   const greeting = activeSession ? activeSession.title : "How can I help you?";
   const sidebarSelectionAgentId = activeSession?.agent_id ?? selectedAgentId;
+  const filteredSessions = sidebarSelectionAgentId
+    ? sessions.filter((session) => session.agent_id === sidebarSelectionAgentId)
+    : [];
+  const hasConversation = messages.length > 0;
   const workspaceLabel = currentUser.is_admin ? "Admin workspace" : "Employee workspace";
-  const workspaceSummary = currentUser.is_admin
-    ? "Manage agents, test prompts, and review sessions from one place."
-    : "Chat with the agents assigned to you and keep each session separate.";
   const sidebarToggleTitle = isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
-  const userRoleLabel = currentUser.is_admin ? "Admin" : formatRoleLabel(currentUser.role_key);
+
+  function renderComposer(className?: string) {
+    return (
+      <div className={className}>
+        <PromptInput
+          className="rounded-[1.75rem] border-white/8 bg-[#2a2824] p-2.5 shadow-none"
+          isLoading={isSending}
+          maxHeight={176}
+          onSubmit={() => {
+            void submitMessage();
+          }}
+          onValueChange={setDraft}
+          value={draft}
+        >
+          {files.length > 0 ? (
+            <div className="flex flex-wrap gap-2 px-1 pb-2">
+              {files.map((file, index) => (
+                <div
+                  key={`${file.name}-${index}`}
+                  className="flex items-center gap-2 rounded-2xl bg-[#37332d] px-3 py-1.5 text-[0.8rem] text-[#ddd5c8]"
+                >
+                  <Paperclip className="size-3.5" />
+                  <span className="max-w-[160px] truncate">{file.name}</span>
+                  <button
+                    className="rounded-full p-1 transition hover:bg-white/10"
+                    onClick={() => removeFile(index)}
+                    type="button"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <PromptInputTextarea
+            className="min-h-[3.5rem] px-3 py-2.5 text-[0.95rem] leading-6 text-[#f0ebe2] placeholder:text-[#6f695f] sm:min-h-[4rem]"
+            placeholder="Ask something about your work, your agents, or the current task..."
+          />
+
+          <PromptInputActions className="flex-col items-stretch gap-2 px-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2.5 text-[0.82rem] text-[#bbb4a7]">
+              <PromptInputAction tooltip="Attach files">
+                <label
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full transition hover:bg-white/6"
+                  htmlFor="file-upload"
+                >
+                  <input
+                    ref={uploadInputRef}
+                    className="hidden"
+                    id="file-upload"
+                    multiple
+                    onChange={handleFileChange}
+                    type="file"
+                  />
+                  <Plus className="size-4" />
+                </label>
+              </PromptInputAction>
+              <span className="truncate">{activeAgent?.name ?? "No agent selected"}</span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 sm:justify-end">
+              <PromptInputAction tooltip={isSending ? "Generating response" : "Send message"}>
+                <Button
+                  className="h-9 w-9 rounded-full bg-[#f1ede6] text-[#1a1916] hover:bg-[#fffaf0]"
+                  disabled={isSending || !draft.trim() || agents.length === 0}
+                  onClick={() => {
+                    void submitMessage();
+                  }}
+                  size="icon"
+                  type="button"
+                  variant="default"
+                >
+                  {isSending ? (
+                    <Square className="size-3.5 fill-current" />
+                  ) : (
+                    <ArrowUp className="size-3.5" />
+                  )}
+                </Button>
+              </PromptInputAction>
+            </div>
+          </PromptInputActions>
+        </PromptInput>
+        {error ? <div className="mt-3 text-sm text-[#d97757]">{error}</div> : null}
+      </div>
+    );
+  }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(217,119,87,0.14),_transparent_28%),linear-gradient(180deg,_#1b1a17_0%,_#171511_100%)] text-foreground">
-      <div className="relative min-h-screen overflow-hidden">
+    <main className="h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(217,119,87,0.14),_transparent_28%),linear-gradient(180deg,_#1b1a17_0%,_#171511_100%)] text-foreground">
+      <div className="relative flex h-full overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:40px_40px] opacity-20" />
+
+        {pendingDeleteSession ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
+            <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-[#1f1c18] p-6 shadow-[0_35px_100px_rgba(0,0,0,0.45)]">
+              <p className="text-[11px] uppercase tracking-[0.26em] text-[#8e8678]">
+                Delete Session
+              </p>
+              <h2 className="mt-3 [font-family:var(--font-display)] text-[2rem] leading-none tracking-[-0.04em] text-[#efe7d8]">
+                Remove this session?
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-[#a89f92]">
+                This will delete <span className="text-[#efe7d8]">{pendingDeleteSession.title}</span>{" "}
+                from the session list and remove its chat history from the app view.
+              </p>
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  className="rounded-full px-4 py-2 text-sm text-[#bdb4a7] transition hover:bg-white/6"
+                  disabled={Boolean(deletingSessionId)}
+                  onClick={() => setPendingDeleteSession(null)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-full bg-[#f0b2a7] px-5 py-2 text-sm text-[#1b1714] transition hover:bg-[#ffc1b7] disabled:bg-[#7f675f] disabled:text-[#d6c8c1]"
+                  disabled={deletingSessionId === pendingDeleteSession.thread_id}
+                  onClick={() => {
+                    void deleteSession(pendingDeleteSession.thread_id);
+                  }}
+                  type="button"
+                >
+                  {deletingSessionId === pendingDeleteSession.thread_id ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {isMobileSidebarOpen ? (
           <button
@@ -720,30 +957,30 @@ export default function HomePage() {
           />
         ) : null}
 
-        <div className="relative flex min-h-screen">
+        <div className="relative flex h-full min-h-0 w-full overflow-hidden">
           <aside
             className={`fixed inset-y-0 left-0 z-40 flex w-[19.5rem] max-w-[86vw] flex-col border-r border-white/8 bg-[#1d1b18]/96 px-4 py-4 shadow-[0_30px_90px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-all duration-300 lg:static lg:max-w-none lg:shadow-none ${
               isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
             } ${
               isDesktopSidebarCollapsed
                 ? "lg:w-0 lg:min-w-0 lg:translate-x-0 lg:overflow-hidden lg:border-r-0 lg:px-0 lg:py-0 lg:opacity-0 lg:pointer-events-none"
-                : "lg:w-[20.5rem] lg:translate-x-0 lg:opacity-100"
+                : "lg:h-full lg:w-[20.5rem] lg:translate-x-0 lg:opacity-100"
             }`}
           >
             <div className="flex h-full min-h-0 flex-col">
-              <div className="flex items-start justify-between gap-3 border-b border-white/8 px-1 pb-4">
+              <div className="flex items-start justify-between gap-3 border-b border-white/8 px-1 pb-3">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.28em] text-[#9d9586]">
                     HumanTouch
                   </p>
-                  <div className="mt-2 [font-family:var(--font-display)] text-[2rem] leading-none tracking-[-0.04em] text-[#f0e8da]">
+                  <div className="mt-1.5 [font-family:var(--font-display)] text-[1.55rem] leading-none tracking-[-0.04em] text-[#f0e8da]">
                     Workspace
                   </div>
-                  <p className="mt-2 text-sm text-[#91897d]">{workspaceLabel}</p>
+                  <p className="mt-1.5 text-[0.82rem] text-[#91897d]">{workspaceLabel}</p>
                 </div>
                 <button
                   aria-label={sidebarToggleTitle}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-[#c9c1b4] transition hover:bg-white/5"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-[#c9c1b4] transition hover:bg-white/5"
                   onClick={toggleSidebar}
                   type="button"
                 >
@@ -751,25 +988,25 @@ export default function HomePage() {
                 </button>
               </div>
 
-              <div className="mt-5 grid gap-2">
+              <div className="mt-4 grid gap-2">
                 <button
-                  className="flex items-center gap-3 rounded-2xl border border-white/8 bg-[#26231f] px-4 py-3 text-left text-[1rem] text-[#ede6d9] transition hover:bg-[#2d2925]"
+                  className="flex items-center gap-3 rounded-2xl border border-white/8 bg-[#26231f] px-3.5 py-2.5 text-left text-[0.95rem] text-[#ede6d9] transition hover:bg-[#2d2925]"
                   onClick={() => {
                     void createSession(selectedAgentId ?? undefined);
                     closeMobileSidebar();
                   }}
                   type="button"
                 >
-                  <Plus className="size-5" />
+                  <Plus className="size-4" />
                   New chat
                 </button>
                 {currentUser.is_admin ? (
                   <button
-                    className="flex items-center gap-3 rounded-2xl px-4 py-3 text-left text-[1rem] text-[#c6bfb2] transition hover:bg-white/5"
+                    className="flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-left text-[0.95rem] text-[#c6bfb2] transition hover:bg-white/5"
                     onClick={() => setIsAgentFormOpen((current) => !current)}
                     type="button"
                   >
-                    <WandSparkles className="size-5" />
+                    <WandSparkles className="size-4" />
                     {isAgentFormOpen ? "Close agent form" : "Create agent"}
                   </button>
                 ) : null}
@@ -847,10 +1084,10 @@ export default function HomePage() {
                 </form>
               ) : null}
 
-              <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5 pr-1">
                 <section>
                   <div className="flex items-center justify-between px-2">
-                    <p className="text-sm text-[#8b8477]">Agents</p>
+                    <p className="text-[0.82rem] text-[#8b8477]">Agents</p>
                     <p className="text-xs text-[#6f685d]">{agents.length}</p>
                   </div>
                   <div className="mt-2 space-y-1">
@@ -860,7 +1097,7 @@ export default function HomePage() {
                       return (
                         <button
                           key={agent.id}
-                          className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition ${
+                          className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${
                             isSelected
                               ? "bg-[#2a2723] text-[#f1eadc]"
                               : "text-[#b8b0a2] hover:bg-white/5"
@@ -873,12 +1110,12 @@ export default function HomePage() {
                           }}
                           type="button"
                         >
-                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
-                            <Bot className="size-4" />
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
+                            <Bot className="size-3.5" />
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[0.98rem]">{agent.name}</span>
-                            <span className="block truncate text-xs text-[#8f8778]">
+                            <span className="block truncate text-[0.9rem]">{agent.name}</span>
+                            <span className="block truncate text-[11px] text-[#8f8778]">
                               {agent.agent_info.role || "Assigned agent"} ·{" "}
                               {agent.agent_info.workspace?.mode ?? "chat"}
                             </span>
@@ -900,42 +1137,143 @@ export default function HomePage() {
                   </div>
                 </section>
 
-                <section className="mt-6">
+                <section className="flex min-h-0 flex-1 flex-col">
                   <div className="flex items-center justify-between px-2">
-                    <p className="text-sm text-[#8b8477]">Recents</p>
-                    <p className="text-xs text-[#6f685d]">{sessions.length}</p>
+                    <p className="text-[0.82rem] text-[#8b8477]">Recents</p>
+                    <p className="text-xs text-[#6f685d]">{filteredSessions.length}</p>
                   </div>
-                  <div className="mt-2 space-y-1">
-                    {sessions.map((session) => {
+                  <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+                    {filteredSessions.map((session) => {
                       const isActive = session.thread_id === activeThreadId;
-                      const sessionAgent = agents.find((agent) => agent.id === session.agent_id);
+                      const isMenuOpen = openSessionMenuId === session.thread_id;
+                      const isEditing = editingSessionId === session.thread_id;
 
                       return (
-                        <button
+                        <div
                           key={session.thread_id}
-                          className={`w-full rounded-2xl px-3 py-3 text-left transition ${
+                          className={`w-full rounded-2xl px-3 py-2.5 text-left transition ${
                             isActive ? "bg-[#2a2723]" : "hover:bg-white/5"
                           }`}
-                          onClick={() => {
-                            setActiveThreadId(session.thread_id);
-                            setSelectedAgentId(session.agent_id);
-                            closeMobileSidebar();
-                          }}
-                          type="button"
                         >
-                          <p className="truncate text-[0.98rem] text-[#ddd5c7]">{session.title}</p>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-[#8d8578]">
-                            <span>{sessionAgent?.name ?? "agent"}</span>
-                            <span>·</span>
-                            <span>{new Date(session.updated_at).toLocaleDateString()}</span>
+                          <div className="flex items-start gap-2">
+                            <div className="min-w-0 flex-1">
+                              {isEditing ? (
+                                <div className="space-y-2">
+                                  <input
+                                    autoFocus
+                                    className="w-full rounded-xl border border-white/10 bg-[#1f1d19] px-3 py-2 text-[0.9rem] text-[#eee5d7] outline-none"
+                                    onChange={(event) => setEditingSessionTitle(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void renameSession(session.thread_id);
+                                      }
+
+                                      if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelRenamingSession();
+                                      }
+                                    }}
+                                    value={editingSessionTitle}
+                                  />
+                                  <div className="flex items-center gap-3 text-xs">
+                                    <button
+                                      className="text-[#ece4d7] disabled:text-[#8d8578]"
+                                      disabled={isRenamingSession || !editingSessionTitle.trim()}
+                                      onClick={() => {
+                                        void renameSession(session.thread_id);
+                                      }}
+                                      type="button"
+                                    >
+                                      {isRenamingSession ? "Saving..." : "Save"}
+                                    </button>
+                                    <button
+                                      className="text-[#8d8578]"
+                                      onClick={() => {
+                                        cancelRenamingSession();
+                                      }}
+                                      type="button"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  className="w-full text-left"
+                                  onClick={() => {
+                                    setActiveThreadId(session.thread_id);
+                                    setSelectedAgentId(session.agent_id);
+                                    setOpenSessionMenuId(null);
+                                    closeMobileSidebar();
+                                  }}
+                                  type="button"
+                                >
+                                  <p className="truncate text-[0.9rem] text-[#ddd5c7]">
+                                    {session.title}
+                                  </p>
+                                </button>
+                              )}
+                            </div>
+
+                            {!isEditing ? (
+                              <div
+                                className="relative"
+                                ref={isMenuOpen ? sessionMenuRef : undefined}
+                              >
+                                <button
+                                  aria-label={`Session actions for ${session.title}`}
+                                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8d8578] transition hover:bg-white/8 hover:text-[#ddd5c7]"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setOpenSessionMenuId((current) =>
+                                      current === session.thread_id ? null : session.thread_id,
+                                    );
+                                  }}
+                                  type="button"
+                                >
+                                  <MoreHorizontal className="size-4" />
+                                </button>
+
+                                {isMenuOpen ? (
+                                  <div className="absolute right-0 top-9 z-10 min-w-32 rounded-2xl border border-white/10 bg-[#201d19] p-1 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+                                    <button
+                                      className="block w-full rounded-xl px-3 py-2 text-left text-sm text-[#ece4d7] transition hover:bg-white/6"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        startRenamingSession(session);
+                                      }}
+                                      type="button"
+                                    >
+                                      Rename
+                                    </button>
+                                    {currentUser.is_admin ? (
+                                      <button
+                                        className="block w-full rounded-xl px-3 py-2 text-left text-sm text-[#f1b4a8] transition hover:bg-white/6 disabled:text-[#8d8578]"
+                                        disabled={deletingSessionId === session.thread_id}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          promptDeleteSession(session);
+                                        }}
+                                        type="button"
+                                      >
+                                        {deletingSessionId === session.thread_id
+                                          ? "Deleting..."
+                                          : "Delete"}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
 
-                    {!isSessionsLoading && sessions.length === 0 ? (
+                    {!isSessionsLoading && filteredSessions.length === 0 ? (
                       <div className="px-3 py-2 text-sm text-[#8b8477]">
-                        No chats yet. Start one.
+                        No chats yet for this agent.
                       </div>
                     ) : null}
                   </div>
@@ -943,247 +1281,108 @@ export default function HomePage() {
               </div>
 
               <div className="mt-5 rounded-[1.5rem] border border-white/8 bg-[#22201c] px-4 py-4">
-                <div className="flex items-start gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#2d2924] text-[#e6dfd1]">
-                    <UserCircle2 className="size-5" />
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2d2924] text-[#e6dfd1]">
+                    <UserCircle2 className="size-4" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-[#ece5d7]">{currentUser.full_name}</p>
+                    <p className="truncate text-[0.9rem] text-[#ece5d7]">{currentUser.full_name}</p>
                     <p className="truncate text-xs text-[#8f8778]">{currentUser.email}</p>
                   </div>
-                </div>
-                <div className="mt-4 flex items-center justify-between rounded-2xl bg-[#1b1916] px-3 py-2.5">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-[#8f8778]">
-                      {currentUser.is_admin ? "Admin" : "Employee"}
-                    </p>
-                    <p className="text-sm text-[#cfc7ba]">{userRoleLabel}</p>
-                  </div>
                   <button
-                    className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-[#ddd4c6] transition hover:bg-white/5"
+                    aria-label="Logout"
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 text-[#ddd4c6] transition hover:bg-white/5"
                     onClick={() => void handleLogout()}
                     type="button"
                   >
                     <LogOut className="size-4" />
-                    Logout
                   </button>
                 </div>
               </div>
             </div>
           </aside>
 
-          <section className="relative flex min-h-screen min-w-0 flex-1 flex-col">
+          <section className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <header className="sticky top-0 z-20 border-b border-white/6 bg-[#171613]/85 backdrop-blur-xl">
-              <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-                <div className="flex min-w-0 items-center gap-3">
+              <div className="mx-auto flex w-full max-w-6xl items-start justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+                <div className="flex min-w-0 items-center gap-2.5">
                   <button
                     aria-label="Toggle sidebar"
-                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/4 text-[#d7cfbf] transition hover:bg-white/8"
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/4 text-[#d7cfbf] transition hover:bg-white/8"
                     onClick={toggleSidebar}
                     title={sidebarToggleTitle}
                     type="button"
                   >
-                    <Menu className="size-5" />
+                    <Menu className="size-4" />
                   </button>
                   <div className="min-w-0">
                     <p className="text-[11px] uppercase tracking-[0.26em] text-[#8e8678]">
                       Active workspace
                     </p>
-                    <div className="truncate [font-family:var(--font-display)] text-[1.75rem] leading-none tracking-[-0.04em] text-[#efe7d8] sm:text-[2rem]">
+                    <div className="truncate [font-family:var(--font-display)] text-[1.3rem] leading-none tracking-[-0.03em] text-[#efe7d8] sm:text-[1.45rem]">
                       {activeAgent?.name ?? "Choose an agent"}
                     </div>
                   </div>
                 </div>
-
-                <div className="hidden items-center gap-2 sm:flex">
-                  <div className="rounded-full border border-white/10 px-4 py-2 text-sm text-[#d7d0c4]">
-                    {currentUser.is_admin ? "Admin mode" : "Employee mode"}
-                  </div>
-                  <div className="rounded-full border border-white/10 px-4 py-2 text-sm text-[#a79f91]">
-                    {sessions.length} sessions
+                <div className="min-w-0 max-w-[52%] pt-0.5 text-right">
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-[#8e8678]">
+                    Current session
+                  </p>
+                  <div className="mt-1 flex items-start justify-end gap-2 text-right">
+                    <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[#d97757]" />
+                    <h1 className="truncate [font-family:var(--font-display)] text-[1.2rem] leading-none tracking-[-0.03em] text-[#efe7d8] sm:text-[1.35rem]">
+                      {greeting}
+                    </h1>
                   </div>
                 </div>
               </div>
             </header>
 
-            <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6 lg:px-8">
-              <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_19rem]">
-                <div className="rounded-[1.75rem] border border-white/8 bg-[#211f1b]/90 px-5 py-4 shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#8e8678]">
-                    Current session
-                  </p>
-                  <div className="mt-2 flex items-start gap-3">
-                    <Sparkles className="mt-1 size-5 shrink-0 text-[#d97757]" />
-                    <div>
-                      <h1 className="[font-family:var(--font-display)] text-[2rem] leading-[1.02] tracking-[-0.04em] text-[#efe7d8] sm:text-[2.5rem]">
-                        {greeting}
-                      </h1>
-                      <p className="mt-2 max-w-2xl text-sm leading-6 text-[#938b7d]">
-                        {workspaceSummary}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                  <div className="rounded-[1.6rem] border border-white/8 bg-[#211f1b]/80 px-4 py-4">
-                    <p className="text-[11px] uppercase tracking-[0.24em] text-[#8e8678]">
-                      Role
-                    </p>
-                    <p className="mt-2 text-lg text-[#ece4d7]">{userRoleLabel}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-white/8 bg-[#1f1d19]/88 shadow-[0_35px_100px_rgba(0,0,0,0.24)]">
-                <div className="border-b border-white/8 px-4 py-4 sm:px-6">
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-[#ada596]">
-                    <span className="rounded-full bg-[#2c2924] px-3 py-1.5 text-[#ddd6ca]">
-                      Agent: {activeAgent?.name ?? "Unassigned"}
-                    </span>
-                    <span className="rounded-full bg-[#2c2924] px-3 py-1.5 text-[#ddd6ca]">
-                      {messages.length} messages
-                    </span>
-                    <span className="rounded-full bg-[#2c2924] px-3 py-1.5 text-[#ddd6ca]">
-                      {currentUser.full_name}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-                  {messages.length === 0 ? (
-                    <div className="flex h-full flex-col items-center justify-center px-2 text-center">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#2e2b26] text-[#d97757]">
-                        <Sparkles className="size-7" />
-                      </div>
-                      <h2 className="mt-6 [font-family:var(--font-display)] text-[2.1rem] leading-[1.02] tracking-[-0.04em] text-[#e7dfd2] sm:text-[3rem]">
-                        Start the conversation
-                      </h2>
-                      <p className="mt-3 max-w-xl text-sm leading-7 text-[#938b7d]">
-                        Ask for guidance, operational drafts, or agent testing. Each chat stays
-                        attached to its own session so you can return later.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+            <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 lg:px-8">
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.9rem] border border-white/8 bg-[#1f1d19]/88 shadow-[0_28px_80px_rgba(0,0,0,0.24)]">
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[12.5rem] sm:px-6 sm:pb-[13rem]">
+                  {hasConversation ? (
+                    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3.5">
                       {messages.map((message, index) => (
                         <article
                           key={`${message.created_at}-${index}`}
-                          className={`rounded-[1.75rem] px-4 py-4 sm:px-5 ${
+                          className={`rounded-[1.4rem] px-4 py-3.5 sm:px-5 ${
                             message.role === "user"
-                              ? "ml-auto max-w-[88%] bg-[#2b2824] text-[#ece5d8] sm:max-w-[78%]"
-                              : "mr-auto max-w-full border border-white/6 bg-[#23211d] text-[#d7d1c5] sm:max-w-[88%]"
+                              ? "ml-auto max-w-[84%] bg-[#2b2824] text-[#ece5d8] sm:max-w-[74%]"
+                              : "mr-auto max-w-full border border-white/6 bg-[#23211d] text-[#d7d1c5] sm:max-w-[84%]"
                           }`}
                         >
-                          <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-[#8e8678]">
+                          <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-[#8e8678]">
                             {message.role}
                           </p>
-                          <p className="whitespace-pre-wrap text-[0.98rem] leading-7 sm:text-[1.02rem] sm:leading-8">
+                          <p className="whitespace-pre-wrap text-[0.94rem] leading-6 text-[#ddd7ca]">
                             {message.content ||
                               (isSending && index === messages.length - 1 ? "..." : "")}
                           </p>
                         </article>
                       ))}
                     </div>
+                  ) : (
+                    <div className="flex min-h-full items-center justify-center py-6">
+                      <div className="w-full max-w-3xl text-center transition-all duration-300 ease-out">
+                        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#2e2b26] text-[#d97757]">
+                          <Sparkles className="size-6" />
+                        </div>
+                        <h2 className="mt-5 [font-family:var(--font-display)] text-[1.8rem] leading-[1.05] tracking-[-0.03em] text-[#e7dfd2] sm:text-[2.2rem]">
+                          Start the conversation
+                        </h2>
+                        <p className="mx-auto mt-2.5 max-w-2xl text-[0.95rem] leading-6 text-[#938b7d]">
+                          Ask for guidance, operational drafts, or agent testing. Each chat stays
+                          attached to its own session so you can return later.
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                <div className="border-t border-white/8 px-3 py-3 sm:px-4">
-                  <PromptInput
-                    className="border-white/8 bg-[#2a2824] p-3 shadow-none"
-                    isLoading={isSending}
-                    onSubmit={() => {
-                      void submitMessage();
-                    }}
-                    onValueChange={setDraft}
-                    value={draft}
-                  >
-                    {files.length > 0 ? (
-                      <div className="flex flex-wrap gap-2 px-1 pb-3">
-                        {files.map((file, index) => (
-                          <div
-                            key={`${file.name}-${index}`}
-                            className="flex items-center gap-2 rounded-2xl bg-[#37332d] px-3 py-2 text-sm text-[#ddd5c8]"
-                          >
-                            <Paperclip className="size-4" />
-                            <span className="max-w-[160px] truncate">{file.name}</span>
-                            <button
-                              className="rounded-full p-1 transition hover:bg-white/10"
-                              onClick={() => removeFile(index)}
-                              type="button"
-                            >
-                              <X className="size-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <PromptInputTextarea
-                      className="min-h-[5rem] px-3 py-3 text-[1rem] text-[#f0ebe2] placeholder:text-[#6f695f] sm:min-h-[5.75rem]"
-                      placeholder="Ask something about your work, your agents, or the current task..."
-                    />
-
-                    <PromptInputActions className="flex-col items-stretch gap-3 px-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex flex-wrap items-center gap-3 text-sm text-[#bbb4a7]">
-                        <PromptInputAction tooltip="Attach files">
-                          <label
-                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full transition hover:bg-white/6"
-                            htmlFor="file-upload"
-                          >
-                            <input
-                              ref={uploadInputRef}
-                              className="hidden"
-                              id="file-upload"
-                              multiple
-                              onChange={handleFileChange}
-                              type="file"
-                            />
-                            <Plus className="size-5" />
-                          </label>
-                        </PromptInputAction>
-                        <span className="truncate">{activeAgent?.name ?? "No agent selected"}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-4 sm:justify-end">
-                        <PromptInputAction
-                          tooltip={isSending ? "Generating response" : "Send message"}
-                        >
-                          <Button
-                            className="h-10 w-10 rounded-full bg-[#f1ede6] text-[#1a1916] hover:bg-[#fffaf0]"
-                            disabled={isSending || !draft.trim() || agents.length === 0}
-                            onClick={() => {
-                              void submitMessage();
-                            }}
-                            size="icon"
-                            type="button"
-                            variant="default"
-                          >
-                            {isSending ? (
-                              <Square className="size-4 fill-current" />
-                            ) : (
-                              <ArrowUp className="size-4" />
-                            )}
-                          </Button>
-                        </PromptInputAction>
-                      </div>
-                    </PromptInputActions>
-                  </PromptInput>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-                    <div className="rounded-full border border-white/10 px-4 py-2 text-[#d7d0c4]">
-                      {currentUser.is_admin ? "Admin mode" : "Employee mode"}
-                    </div>
-                    <div className="rounded-full border border-white/10 px-4 py-2 text-[#d7d0c4]">
-                      Role: {userRoleLabel}
-                    </div>
-                    <div className="rounded-full border border-white/10 px-4 py-2 text-[#d7d0c4]">
-                      Sessions: {sessions.length}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 text-sm text-[#8d8578]">
-                    {error ? <span className="text-[#d97757]">{error}</span> : "Streaming over SSE"}
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 px-3 pb-3 sm:px-4 sm:pb-4">
+                  <div className="absolute inset-x-0 bottom-0 h-32 bg-[linear-gradient(180deg,rgba(31,29,25,0)_0%,rgba(31,29,25,0.95)_48%,rgba(31,29,25,1)_100%)]" />
+                  <div className="pointer-events-auto relative mx-auto w-full max-w-3xl">
+                    {renderComposer("translate-y-0 opacity-100 transition-all duration-300 ease-out")}
                   </div>
                 </div>
               </div>

@@ -16,6 +16,7 @@ const app = Fastify({
 await app.register(cors, {
   origin: settings.allowedOrigins,
   credentials: true,
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
 });
 await devAuthPlugin(app);
 

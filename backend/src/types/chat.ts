@@ -23,6 +23,10 @@ export type SessionCreatePayload = {
   user_prompt?: string;
 };
 
+export type SessionUpdatePayload = {
+  title: string;
+};
+
 export type ChatStreamPayload = {
   thread_id: string;
   message: string;

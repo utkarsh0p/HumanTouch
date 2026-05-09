@@ -27,6 +27,10 @@ const threadIdSchema = z.object({
   thread_id: z.string().min(1),
 });
 
+const updateSessionSchema = z.object({
+  title: z.string().trim().min(1),
+});
+
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/sessions", async (request) => {
     const sessions = request.currentUser.is_admin
@@ -123,5 +127,52 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     );
 
     return messages satisfies MessageRecord[];
+  });
+
+  app.patch("/api/sessions/:thread_id", async (request, reply) => {
+    const { thread_id } = threadIdSchema.parse(request.params);
+    const payload = updateSessionSchema.parse(request.body);
+    const canAccess = await canUserAccessSession(request.currentUser, thread_id);
+    if (!canAccess) {
+      reply.code(403);
+      return { detail: "Session access denied." };
+    }
+
+    const [updatedSession] = await query<SessionRecord>(
+      `UPDATE "${settings.appSchema}".agent_sessions
+       SET title = $3, updated_at = $4
+       WHERE thread_id = $1 AND company_id = $2
+       RETURNING thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used`,
+      [thread_id, request.currentUser.company_id, payload.title.trim(), new Date()],
+    );
+
+    if (!updatedSession) {
+      reply.code(404);
+      return { detail: "Session not found." };
+    }
+
+    return updatedSession satisfies SessionRecord;
+  });
+
+  app.delete("/api/sessions/:thread_id", async (request, reply) => {
+    const { thread_id } = threadIdSchema.parse(request.params);
+    if (!request.currentUser.is_admin) {
+      reply.code(403);
+      return { detail: "Admin access required." };
+    }
+
+    const [deletedSession] = await query<{ thread_id: string }>(
+      `DELETE FROM "${settings.appSchema}".agent_sessions
+       WHERE thread_id = $1 AND company_id = $2
+       RETURNING thread_id`,
+      [thread_id, request.currentUser.company_id],
+    );
+
+    if (!deletedSession) {
+      reply.code(404);
+      return { detail: "Session not found." };
+    }
+
+    return { success: true, thread_id };
   });
 }
