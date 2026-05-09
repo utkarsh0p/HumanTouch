@@ -148,6 +148,8 @@ export default function HomePage() {
   const [pendingDeleteSession, setPendingDeleteSession] = useState<Session | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const sessionMenuRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
     void loadCurrentUser();
@@ -205,6 +207,14 @@ export default function HomePage() {
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [openSessionMenuId]);
 
+  useEffect(() => {
+    if (!activeThreadId || !transcriptRef.current) {
+      return;
+    }
+
+    scrollTranscriptToBottom("auto");
+  }, [activeThreadId]);
+
   function resetWorkspace() {
     setAgents([]);
     setSelectedAgentId(null);
@@ -234,6 +244,29 @@ export default function HomePage() {
 
   function closeMobileSidebar() {
     setIsMobileSidebarOpen(false);
+  }
+
+  function scrollTranscriptToBottom(behavior: ScrollBehavior = "smooth") {
+    const container = transcriptRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior,
+    });
+  }
+
+  function updateAutoScrollState() {
+    const container = transcriptRef.current;
+    if (!container) {
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom <= 120;
   }
 
   function resetCreateAgentForm() {
@@ -469,6 +502,17 @@ export default function HomePage() {
       return;
     }
 
+    const currentSession = activeThreadId
+      ? sessions.find((session) => session.thread_id === activeThreadId)
+      : null;
+
+    if (currentSession && currentSession.agent_id === nextAgentId && messages.length === 0) {
+      setActiveThreadId(currentSession.thread_id);
+      setSelectedAgentId(currentSession.agent_id);
+      setFiles([]);
+      return;
+    }
+
     try {
       const response = await apiFetch("/api/sessions", {
         method: "POST",
@@ -633,6 +677,8 @@ export default function HomePage() {
         created_at: new Date().toISOString(),
       },
     ]);
+    shouldAutoScrollRef.current = true;
+    requestAnimationFrame(() => scrollTranscriptToBottom("smooth"));
 
     try {
       const response = await apiFetch("/api/chat/stream", {
@@ -723,6 +769,12 @@ export default function HomePage() {
         };
 
         return next;
+      });
+
+      requestAnimationFrame(() => {
+        if (shouldAutoScrollRef.current) {
+          scrollTranscriptToBottom("auto");
+        }
       });
     }
   }
@@ -1378,7 +1430,11 @@ export default function HomePage() {
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#1f1d19]/72">
-                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 pb-[12.5rem] sm:px-10 sm:pb-[13rem] lg:px-12 ht-scroll-region">
+                <div
+                  ref={transcriptRef}
+                  className="min-h-0 flex-1 overflow-y-auto px-6 py-5 pb-[12.5rem] sm:px-10 sm:pb-[13rem] lg:px-12 ht-scroll-region"
+                  onScroll={updateAutoScrollState}
+                >
                   {hasConversation ? (
                     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3.5">
                       {messages.map((message, index) => (
@@ -1399,6 +1455,7 @@ export default function HomePage() {
                           </p>
                         </article>
                       ))}
+                      <div aria-hidden="true" className="h-px w-full" />
                     </div>
                   ) : (
                     <div className="flex min-h-full items-center justify-center py-6">
