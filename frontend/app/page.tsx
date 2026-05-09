@@ -4,10 +4,11 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
+  ChevronDown,
   LogOut,
-  Menu,
   MoreHorizontal,
   PanelLeftClose,
+  PanelLeftOpen,
   Paperclip,
   Plus,
   Sparkles,
@@ -138,6 +139,7 @@ export default function HomePage() {
   const [employeeEmailDraft, setEmployeeEmailDraft] = useState("");
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isAgentListOpen, setIsAgentListOpen] = useState(false);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingSessionTitle, setEditingSessionTitle] = useState("");
@@ -212,6 +214,7 @@ export default function HomePage() {
     setDraft("");
     setFiles([]);
     setIsAgentFormOpen(false);
+    setIsAgentListOpen(false);
     setIsMobileSidebarOpen(false);
     setOpenSessionMenuId(null);
     setEditingSessionId(null);
@@ -816,7 +819,6 @@ export default function HomePage() {
     ? sessions.filter((session) => session.agent_id === sidebarSelectionAgentId)
     : [];
   const hasConversation = messages.length > 0;
-  const workspaceLabel = currentUser.is_admin ? "Admin workspace" : "Employee workspace";
   const sidebarToggleTitle = isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
 
   function renderComposer(className?: string) {
@@ -948,6 +950,107 @@ export default function HomePage() {
           </div>
         ) : null}
 
+        {currentUser.is_admin && isAgentFormOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <button
+              aria-label="Close create agent dialog"
+              className="absolute inset-0"
+              onClick={() => {
+                resetCreateAgentForm();
+                setIsAgentFormOpen(false);
+              }}
+              type="button"
+            />
+            <form
+              className="relative z-10 w-full max-w-xl rounded-[2rem] border border-white/10 bg-[#26231f] p-5 shadow-[0_35px_100px_rgba(0,0,0,0.45)]"
+              onSubmit={handleCreateAgent}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[#9d9586]">New Agent</p>
+                  <h2 className="mt-2 [font-family:var(--font-display)] text-[1.65rem] leading-none tracking-[-0.03em] text-[#f2ede3]">
+                    Create an agent
+                  </h2>
+                </div>
+                <button
+                  aria-label="Close create agent dialog"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-[#bfb7ab] transition hover:bg-white/5"
+                  onClick={() => {
+                    resetCreateAgentForm();
+                    setIsAgentFormOpen(false);
+                  }}
+                  type="button"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              <div className="mt-4 space-y-3">
+                <input
+                  className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                  onChange={(event) => setAgentName(event.target.value)}
+                  placeholder="Agent name"
+                  value={agentName}
+                />
+                <textarea
+                  className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                  onChange={(event) => setAgentPurpose(event.target.value)}
+                  placeholder="What should this agent help employees with?"
+                  value={agentPurpose}
+                />
+                <textarea
+                  className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                  onChange={(event) => setAgentAllowedTasks(event.target.value)}
+                  placeholder="What tasks is it allowed to do?"
+                  value={agentAllowedTasks}
+                />
+                <textarea
+                  className="min-h-20 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                  onChange={(event) => setAgentRestrictions(event.target.value)}
+                  placeholder="What should it avoid or never do?"
+                  value={agentRestrictions}
+                />
+                <input
+                  className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                  onChange={(event) => setRoleDraft(event.target.value)}
+                  placeholder="Assign to employee roles, optional"
+                  value={roleDraft}
+                />
+                <input
+                  className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                  onChange={(event) => setEmployeeEmailDraft(event.target.value)}
+                  placeholder="Assign to employee emails, optional"
+                  value={employeeEmailDraft}
+                />
+              </div>
+              <div className="mt-5 flex items-center justify-between gap-3">
+                <button
+                  className="text-sm text-[#a79f91]"
+                  onClick={() => {
+                    resetCreateAgentForm();
+                    setIsAgentFormOpen(false);
+                  }}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <Button
+                  className="rounded-full bg-[#f0ece4] px-4 text-[#1c1b18] hover:bg-[#fffaf0]"
+                  disabled={
+                    isCreatingAgent ||
+                    !agentName.trim() ||
+                    !agentPurpose.trim() ||
+                    !agentAllowedTasks.trim() ||
+                    !agentRestrictions.trim()
+                  }
+                  type="submit"
+                >
+                  {isCreatingAgent ? "Creating..." : "Save"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        ) : null}
+
         {isMobileSidebarOpen ? (
           <button
             aria-label="Close sidebar"
@@ -968,27 +1071,7 @@ export default function HomePage() {
             }`}
           >
             <div className="flex h-full min-h-0 flex-col">
-              <div className="flex items-start justify-between gap-3 border-b border-white/8 px-1 pb-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#9d9586]">
-                    HumanTouch
-                  </p>
-                  <div className="mt-1.5 [font-family:var(--font-display)] text-[1.55rem] leading-none tracking-[-0.04em] text-[#f0e8da]">
-                    Workspace
-                  </div>
-                  <p className="mt-1.5 text-[0.82rem] text-[#91897d]">{workspaceLabel}</p>
-                </div>
-                <button
-                  aria-label={sidebarToggleTitle}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-[#c9c1b4] transition hover:bg-white/5"
-                  onClick={toggleSidebar}
-                  type="button"
-                >
-                  <PanelLeftClose className="size-4" />
-                </button>
-              </div>
-
-              <div className="mt-4 grid gap-2">
+              <div className="grid gap-2">
                 <button
                   className="flex items-center gap-3 rounded-2xl border border-white/8 bg-[#26231f] px-3.5 py-2.5 text-left text-[0.95rem] text-[#ede6d9] transition hover:bg-[#2d2925]"
                   onClick={() => {
@@ -1012,129 +1095,80 @@ export default function HomePage() {
                 ) : null}
               </div>
 
-              {currentUser.is_admin && isAgentFormOpen ? (
-                <form
-                  className="mt-5 rounded-[1.8rem] border border-white/10 bg-[#26231f] p-4"
-                  onSubmit={handleCreateAgent}
-                >
-                  <p className="text-xs uppercase tracking-[0.24em] text-[#9d9586]">New Agent</p>
-                  <div className="mt-3 space-y-3">
-                    <input
-                      className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                      onChange={(event) => setAgentName(event.target.value)}
-                      placeholder="Agent name"
-                      value={agentName}
-                    />
-                    <textarea
-                      className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                      onChange={(event) => setAgentPurpose(event.target.value)}
-                      placeholder="What should this agent help employees with?"
-                      value={agentPurpose}
-                    />
-                    <textarea
-                      className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                      onChange={(event) => setAgentAllowedTasks(event.target.value)}
-                      placeholder="What tasks is it allowed to do?"
-                      value={agentAllowedTasks}
-                    />
-                    <textarea
-                      className="min-h-20 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                      onChange={(event) => setAgentRestrictions(event.target.value)}
-                      placeholder="What should it avoid or never do?"
-                      value={agentRestrictions}
-                    />
-                    <input
-                      className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                      onChange={(event) => setRoleDraft(event.target.value)}
-                      placeholder="Assign to employee roles, optional"
-                      value={roleDraft}
-                    />
-                    <input
-                      className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                      onChange={(event) => setEmployeeEmailDraft(event.target.value)}
-                      placeholder="Assign to employee emails, optional"
-                      value={employeeEmailDraft}
-                    />
-                  </div>
-                  <div className="mt-4 flex items-center justify-between gap-3">
+              <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5 pr-1">
+                <section className="rounded-[1.4rem] border border-white/8 bg-[#22201c] px-3 py-3">
+                  <div className="flex items-center justify-between px-2">
+                    <div>
+                      <p className="text-[0.82rem] text-[#8b8477]">Agents</p>
+                      <p className="mt-1 truncate text-[0.9rem] text-[#ece5d7]">
+                        {activeAgent?.name ?? "No agent selected"}
+                      </p>
+                    </div>
                     <button
-                      className="text-sm text-[#a79f91]"
-                      onClick={() => {
-                        resetCreateAgentForm();
-                        setIsAgentFormOpen(false);
-                      }}
+                      aria-label={isAgentListOpen ? "Hide agents" : "Show agents"}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-[#bcb4a7] transition hover:bg-white/5"
+                      onClick={() => setIsAgentListOpen((current) => !current)}
                       type="button"
                     >
-                      Cancel
+                      <ChevronDown
+                        className={`size-4 transition-transform ${isAgentListOpen ? "rotate-180" : ""}`}
+                      />
                     </button>
-                    <Button
-                      className="rounded-full bg-[#f0ece4] px-4 text-[#1c1b18] hover:bg-[#fffaf0]"
-                      disabled={
-                        isCreatingAgent ||
-                        !agentName.trim() ||
-                        !agentPurpose.trim() ||
-                        !agentAllowedTasks.trim() ||
-                        !agentRestrictions.trim()
-                      }
-                      type="submit"
-                    >
-                      {isCreatingAgent ? "Creating..." : "Save"}
-                    </Button>
                   </div>
-                </form>
-              ) : null}
-
-              <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5 pr-1">
-                <section>
-                  <div className="flex items-center justify-between px-2">
-                    <p className="text-[0.82rem] text-[#8b8477]">Agents</p>
-                    <p className="text-xs text-[#6f685d]">{agents.length}</p>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    {agents.map((agent) => {
-                      const isSelected = agent.id === sidebarSelectionAgentId;
-
-                      return (
-                        <button
-                          key={agent.id}
-                          className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${
-                            isSelected
-                              ? "bg-[#2a2723] text-[#f1eadc]"
-                              : "text-[#b8b0a2] hover:bg-white/5"
-                          }`}
-                          onClick={() => {
-                            setSelectedAgentId(agent.id);
-                            setActiveThreadId(null);
-                            setMessages([]);
-                            closeMobileSidebar();
-                          }}
-                          type="button"
-                        >
-                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
-                            <Bot className="size-3.5" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[0.9rem]">{agent.name}</span>
-                            <span className="block truncate text-[11px] text-[#8f8778]">
-                              {agent.agent_info.role || "Assigned agent"} ·{" "}
-                              {agent.agent_info.workspace?.mode ?? "chat"}
-                            </span>
-                          </span>
-                          {agent.is_system ? (
-                            <span className="text-[10px] uppercase tracking-[0.18em] text-[#8f8778]">
-                              System
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-
-                    {!isAgentsLoading && agents.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-[#8b8477]">
-                        No assigned agents yet.
-                      </div>
+                  <div className="mt-2 flex items-center justify-between px-2 text-[11px] text-[#8f8778]">
+                    <span>{agents.length} assigned</span>
+                    {activeAgent?.agent_info.role ? (
+                      <span className="truncate">{activeAgent.agent_info.role}</span>
                     ) : null}
                   </div>
+                  {isAgentListOpen ? (
+                    <div className="mt-3 space-y-1 border-t border-white/8 pt-3">
+                      {agents.map((agent) => {
+                        const isSelected = agent.id === sidebarSelectionAgentId;
+
+                        return (
+                          <button
+                            key={agent.id}
+                            className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${
+                              isSelected
+                                ? "bg-[#2a2723] text-[#f1eadc]"
+                                : "text-[#b8b0a2] hover:bg-white/5"
+                            }`}
+                            onClick={() => {
+                              setSelectedAgentId(agent.id);
+                              setActiveThreadId(null);
+                              setMessages([]);
+                              setIsAgentListOpen(false);
+                              closeMobileSidebar();
+                            }}
+                            type="button"
+                          >
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
+                              <Bot className="size-3.5" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[0.9rem]">{agent.name}</span>
+                              <span className="block truncate text-[11px] text-[#8f8778]">
+                                {agent.agent_info.role || "Assigned agent"} ·{" "}
+                                {agent.agent_info.workspace?.mode ?? "chat"}
+                              </span>
+                            </span>
+                            {agent.is_system ? (
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-[#8f8778]">
+                                System
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+
+                      {!isAgentsLoading && agents.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-[#8b8477]">
+                          No assigned agents yet.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </section>
 
                 <section className="flex min-h-0 flex-1 flex-col">
@@ -1142,7 +1176,7 @@ export default function HomePage() {
                     <p className="text-[0.82rem] text-[#8b8477]">Recents</p>
                     <p className="text-xs text-[#6f685d]">{filteredSessions.length}</p>
                   </div>
-                  <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+                  <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 ht-scroll-region">
                     {filteredSessions.map((session) => {
                       const isActive = session.thread_id === activeThreadId;
                       const isMenuOpen = openSessionMenuId === session.thread_id;
@@ -1313,7 +1347,11 @@ export default function HomePage() {
                     title={sidebarToggleTitle}
                     type="button"
                   >
-                    <Menu className="size-4" />
+                    {isDesktopSidebarCollapsed ? (
+                      <PanelLeftOpen className="size-4" />
+                    ) : (
+                      <PanelLeftClose className="size-4" />
+                    )}
                   </button>
                   <div className="min-w-0">
                     <p className="text-[11px] uppercase tracking-[0.26em] text-[#8e8678]">
@@ -1338,9 +1376,9 @@ export default function HomePage() {
               </div>
             </header>
 
-            <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 lg:px-8">
-              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.9rem] border border-white/8 bg-[#1f1d19]/88 shadow-[0_28px_80px_rgba(0,0,0,0.24)]">
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[12.5rem] sm:px-6 sm:pb-[13rem]">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#1f1d19]/72">
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 pb-[12.5rem] sm:px-10 sm:pb-[13rem] lg:px-12 ht-scroll-region">
                   {hasConversation ? (
                     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3.5">
                       {messages.map((message, index) => (
@@ -1379,7 +1417,8 @@ export default function HomePage() {
                     </div>
                   )}
                 </div>
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 px-3 pb-3 sm:px-4 sm:pb-4">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-[linear-gradient(180deg,rgba(31,29,25,0.98)_0%,rgba(31,29,25,0.82)_38%,rgba(31,29,25,0)_100%)]" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 px-6 pb-4 sm:px-10 lg:px-12">
                   <div className="absolute inset-x-0 bottom-0 h-32 bg-[linear-gradient(180deg,rgba(31,29,25,0)_0%,rgba(31,29,25,0.95)_48%,rgba(31,29,25,1)_100%)]" />
                   <div className="pointer-events-auto relative mx-auto w-full max-w-3xl">
                     {renderComposer("translate-y-0 opacity-100 transition-all duration-300 ease-out")}
