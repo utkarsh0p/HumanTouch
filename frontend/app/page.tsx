@@ -62,10 +62,12 @@ type Agent = {
   prompt_version: number;
   system_prompt_generated_at: string;
   is_system: boolean;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
   assigned_roles: string[];
   assigned_user_ids: string[];
+  assigned_user_emails: string[];
 };
 
 type ChatMessage = {
@@ -256,6 +258,7 @@ function renderAssistantMarkdown(content: string): ReactNode {
 }
 
 export default function HomePage() {
+  const [agentFormMode, setAgentFormMode] = useState<"create" | "edit">("create");
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
@@ -281,13 +284,18 @@ export default function HomePage() {
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isAgentListOpen, setIsAgentListOpen] = useState(false);
+  const [openAgentMenuId, setOpenAgentMenuId] = useState<string | null>(null);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingSessionTitle, setEditingSessionTitle] = useState("");
   const [isRenamingSession, setIsRenamingSession] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [pendingDeleteSession, setPendingDeleteSession] = useState<Session | null>(null);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [archivingAgentId, setArchivingAgentId] = useState<string | null>(null);
+  const [pendingArchiveAgent, setPendingArchiveAgent] = useState<Agent | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const agentMenuRef = useRef<HTMLDivElement | null>(null);
   const sessionMenuRef = useRef<HTMLDivElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -334,6 +342,21 @@ export default function HomePage() {
   }, [currentUser]);
 
   useEffect(() => {
+    if (!openAgentMenuId) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!agentMenuRef.current?.contains(event.target as Node)) {
+        setOpenAgentMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [openAgentMenuId]);
+
+  useEffect(() => {
     if (!openSessionMenuId) {
       return;
     }
@@ -365,12 +388,16 @@ export default function HomePage() {
     setDraft("");
     setFiles([]);
     setIsAgentFormOpen(false);
+    setAgentFormMode("create");
     setIsAgentListOpen(false);
     setIsMobileSidebarOpen(false);
+    setOpenAgentMenuId(null);
     setOpenSessionMenuId(null);
     setEditingSessionId(null);
     setEditingSessionTitle("");
     setPendingDeleteSession(null);
+    setEditingAgentId(null);
+    setPendingArchiveAgent(null);
     resetCreateAgentForm();
   }
 
@@ -417,6 +444,27 @@ export default function HomePage() {
     setAgentRestrictions("");
     setRoleDraft("");
     setEmployeeEmailDraft("");
+  }
+
+  function openCreateAgentForm() {
+    resetCreateAgentForm();
+    setEditingAgentId(null);
+    setAgentFormMode("create");
+    setOpenAgentMenuId(null);
+    setIsAgentFormOpen(true);
+  }
+
+  function openEditAgentForm(agent: Agent) {
+    setAgentName(agent.name);
+    setAgentPurpose(agent.agent_info.goal ?? "");
+    setAgentAllowedTasks(agent.agent_info.responsibilities ?? "");
+    setAgentRestrictions(agent.agent_info.guardrails ?? "");
+    setRoleDraft(agent.assigned_roles.join(", "));
+    setEmployeeEmailDraft(agent.assigned_user_emails.join(", "));
+    setEditingAgentId(agent.id);
+    setAgentFormMode("edit");
+    setOpenAgentMenuId(null);
+    setIsAgentFormOpen(true);
   }
 
   function startRenamingSession(session: Session) {
@@ -507,9 +555,13 @@ export default function HomePage() {
       const data = (await response.json()) as Agent[];
       setAgents(data);
 
-      if (!selectedAgentId && data.length > 0) {
-        setSelectedAgentId(data[0].id);
-      }
+      setSelectedAgentId((current) => {
+        if (current && data.some((agent) => agent.id === current)) {
+          return current;
+        }
+
+        return data[0]?.id ?? null;
+      });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load agents.");
     } finally {
@@ -936,14 +988,15 @@ export default function HomePage() {
     }
   }
 
-  async function handleCreateAgent(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmitAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setIsCreatingAgent(true);
 
     try {
-      const response = await apiFetch("/api/agents", {
-        method: "POST",
+      const isEditMode = agentFormMode === "edit" && editingAgentId;
+      const response = await apiFetch(isEditMode ? `/api/agents/${editingAgentId}` : "/api/agents", {
+        method: isEditMode ? "PATCH" : "POST",
         body: JSON.stringify({
           name: agentName,
           purpose: agentPurpose,
@@ -961,18 +1014,87 @@ export default function HomePage() {
       });
 
       if (!response.ok) {
-        throw new Error(await parseError(response, "Failed to create agent."));
+        throw new Error(
+          await parseError(
+            response,
+            isEditMode ? "Failed to update agent." : "Failed to create agent.",
+          ),
+        );
       }
 
       const agent = (await response.json()) as Agent;
-      setAgents((current) => [...current, agent]);
-      setSelectedAgentId(agent.id);
+      setAgents((current) => {
+        if (isEditMode) {
+          return current.map((currentAgent) =>
+            currentAgent.id === agent.id ? agent : currentAgent,
+          );
+        }
+
+        return [...current, agent];
+      });
+      setSelectedAgentId((current) => current ?? agent.id);
+      if (!isEditMode) {
+        setSelectedAgentId(agent.id);
+      }
       resetCreateAgentForm();
+      setEditingAgentId(null);
+      setAgentFormMode("create");
       setIsAgentFormOpen(false);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Failed to create agent.");
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : agentFormMode === "edit"
+            ? "Failed to update agent."
+            : "Failed to create agent.",
+      );
     } finally {
       setIsCreatingAgent(false);
+    }
+  }
+
+  function promptArchiveAgent(agent: Agent) {
+    if (!currentUser?.is_admin || agent.is_system) {
+      return;
+    }
+
+    setOpenAgentMenuId(null);
+    setPendingArchiveAgent(agent);
+  }
+
+  async function archiveCurrentAgent(agent: Agent) {
+    if (!currentUser?.is_admin || archivingAgentId) {
+      return;
+    }
+
+    setError(null);
+    setArchivingAgentId(agent.id);
+    setOpenAgentMenuId(null);
+
+    try {
+      const response = await apiFetch(`/api/agents/${agent.id}/archive`, {
+        method: "PATCH",
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Failed to archive agent."));
+      }
+
+      const archivedAgent = (await response.json()) as Agent;
+      setAgents((current) => {
+        const remainingAgents = current.filter((currentAgent) => currentAgent.id !== archivedAgent.id);
+        setSelectedAgentId((currentSelectedAgentId) =>
+          currentSelectedAgentId === archivedAgent.id
+            ? remainingAgents[0]?.id ?? null
+            : currentSelectedAgentId,
+        );
+        return remainingAgents;
+      });
+      setPendingArchiveAgent(null);
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : "Failed to archive agent.");
+    } finally {
+      setArchivingAgentId(null);
     }
   }
 
@@ -1008,9 +1130,15 @@ export default function HomePage() {
 
   const greeting = activeSession ? activeSession.title : "How can I help you?";
   const sidebarSelectionAgentId = activeSession?.agent_id ?? selectedAgentId;
-  const filteredSessions = sidebarSelectionAgentId
-    ? sessions.filter((session) => session.agent_id === sidebarSelectionAgentId)
-    : [];
+  const activeAgentIds = new Set(agents.map((agent) => agent.id));
+  const activeAgentName = activeAgent?.name ?? (activeSession ? "Archived agent" : "Choose an agent");
+  const filteredSessions = sessions.filter((session) => {
+    if (!sidebarSelectionAgentId) {
+      return !activeAgentIds.has(session.agent_id);
+    }
+
+    return session.agent_id === sidebarSelectionAgentId || !activeAgentIds.has(session.agent_id);
+  });
   const hasConversation = messages.length > 0;
   const sidebarToggleTitle = isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
 
@@ -1053,7 +1181,7 @@ export default function HomePage() {
             placeholder="Ask something about your work, your agents, or the current task..."
           />
 
-          <PromptInputActions className="flex-col items-stretch gap-2 px-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+              <PromptInputActions className="flex-col items-stretch gap-2 px-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2.5 text-[0.82rem] text-[#bbb4a7]">
               <PromptInputAction tooltip="Attach files">
                 <label
@@ -1071,7 +1199,7 @@ export default function HomePage() {
                   <Plus className="size-4" />
                 </label>
               </PromptInputAction>
-              <span className="truncate">{activeAgent?.name ?? "No agent selected"}</span>
+              <span className="truncate">{activeAgent?.name ?? (activeSession ? "Archived agent" : "No agent selected")}</span>
             </div>
 
             <div className="flex items-center justify-between gap-3 sm:justify-end">
@@ -1143,33 +1271,77 @@ export default function HomePage() {
           </div>
         ) : null}
 
+        {pendingArchiveAgent ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
+            <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-[#1f1c18] p-6 shadow-[0_35px_100px_rgba(0,0,0,0.45)]">
+              <p className="text-[11px] uppercase tracking-[0.26em] text-[#8e8678]">
+                Archive Agent
+              </p>
+              <h2 className="mt-3 [font-family:var(--font-display)] text-[2rem] leading-none tracking-[-0.04em] text-[#efe7d8]">
+                Archive this agent?
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-[#a89f92]">
+                <span className="text-[#efe7d8]">{pendingArchiveAgent.name}</span> will be removed
+                from the active agent list and blocked for new sessions. Existing chat history stays
+                intact.
+              </p>
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  className="rounded-full px-4 py-2 text-sm text-[#bdb4a7] transition hover:bg-white/6"
+                  disabled={Boolean(archivingAgentId)}
+                  onClick={() => setPendingArchiveAgent(null)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-full bg-[#f0b2a7] px-5 py-2 text-sm text-[#1b1714] transition hover:bg-[#ffc1b7] disabled:bg-[#7f675f] disabled:text-[#d6c8c1]"
+                  disabled={archivingAgentId === pendingArchiveAgent.id}
+                  onClick={() => {
+                    void archiveCurrentAgent(pendingArchiveAgent);
+                  }}
+                  type="button"
+                >
+                  {archivingAgentId === pendingArchiveAgent.id ? "Archiving..." : "Archive"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {currentUser.is_admin && isAgentFormOpen ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
             <button
-              aria-label="Close create agent dialog"
+              aria-label={agentFormMode === "edit" ? "Close edit agent dialog" : "Close create agent dialog"}
               className="absolute inset-0"
               onClick={() => {
                 resetCreateAgentForm();
+                setEditingAgentId(null);
+                setAgentFormMode("create");
                 setIsAgentFormOpen(false);
               }}
               type="button"
             />
             <form
               className="relative z-10 w-full max-w-xl rounded-[2rem] border border-white/10 bg-[#26231f] p-5 shadow-[0_35px_100px_rgba(0,0,0,0.45)]"
-              onSubmit={handleCreateAgent}
+              onSubmit={handleSubmitAgent}
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[#9d9586]">New Agent</p>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[#9d9586]">
+                    {agentFormMode === "edit" ? "Edit Agent" : "New Agent"}
+                  </p>
                   <h2 className="mt-2 [font-family:var(--font-display)] text-[1.65rem] leading-none tracking-[-0.03em] text-[#f2ede3]">
-                    Create an agent
+                    {agentFormMode === "edit" ? "Update this agent" : "Create an agent"}
                   </h2>
                 </div>
                 <button
-                  aria-label="Close create agent dialog"
+                  aria-label={agentFormMode === "edit" ? "Close edit agent dialog" : "Close create agent dialog"}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-[#bfb7ab] transition hover:bg-white/5"
                   onClick={() => {
                     resetCreateAgentForm();
+                    setEditingAgentId(null);
+                    setAgentFormMode("create");
                     setIsAgentFormOpen(false);
                   }}
                   type="button"
@@ -1220,6 +1392,8 @@ export default function HomePage() {
                   className="text-sm text-[#a79f91]"
                   onClick={() => {
                     resetCreateAgentForm();
+                    setEditingAgentId(null);
+                    setAgentFormMode("create");
                     setIsAgentFormOpen(false);
                   }}
                   type="button"
@@ -1237,7 +1411,13 @@ export default function HomePage() {
                   }
                   type="submit"
                 >
-                  {isCreatingAgent ? "Creating..." : "Save"}
+                  {isCreatingAgent
+                    ? agentFormMode === "edit"
+                      ? "Saving..."
+                      : "Creating..."
+                    : agentFormMode === "edit"
+                      ? "Save changes"
+                      : "Save"}
                 </Button>
               </div>
             </form>
@@ -1279,11 +1459,21 @@ export default function HomePage() {
                 {currentUser.is_admin ? (
                   <button
                     className="flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-left text-[0.95rem] text-[#c6bfb2] transition hover:bg-white/5"
-                    onClick={() => setIsAgentFormOpen((current) => !current)}
+                    onClick={() => {
+                      if (isAgentFormOpen && agentFormMode === "create") {
+                        resetCreateAgentForm();
+                        setEditingAgentId(null);
+                        setAgentFormMode("create");
+                        setIsAgentFormOpen(false);
+                        return;
+                      }
+
+                      openCreateAgentForm();
+                    }}
                     type="button"
                   >
                     <WandSparkles className="size-4" />
-                    {isAgentFormOpen ? "Close agent form" : "Create agent"}
+                    {isAgentFormOpen && agentFormMode === "create" ? "Close agent form" : "Create agent"}
                   </button>
                 ) : null}
               </div>
@@ -1294,7 +1484,7 @@ export default function HomePage() {
                     <div>
                       <p className="text-[0.82rem] text-[#8b8477]">Agents</p>
                       <p className="mt-1 truncate text-[0.9rem] text-[#ece5d7]">
-                        {activeAgent?.name ?? "No agent selected"}
+                        {activeAgent?.name ?? (activeSession ? "Archived agent" : "No agent selected")}
                       </p>
                     </div>
                     <button
@@ -1319,40 +1509,96 @@ export default function HomePage() {
                       <div className="max-h-[34vh] space-y-1 overflow-y-auto px-2 pr-3 ht-scroll-region lg:max-h-[38vh]">
                         {agents.map((agent) => {
                           const isSelected = agent.id === sidebarSelectionAgentId;
+                          const isMenuOpen = openAgentMenuId === agent.id;
 
                           return (
-                            <button
+                            <div
                               key={agent.id}
-                              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${
+                              className={`flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left transition ${
                                 isSelected
                                   ? "bg-[#2a2723] text-[#f1eadc]"
                                   : "text-[#b8b0a2] hover:bg-white/5"
                               }`}
-                              onClick={() => {
-                                setSelectedAgentId(agent.id);
-                                setActiveThreadId(null);
-                                setMessages([]);
-                                setIsAgentListOpen(false);
-                                closeMobileSidebar();
-                              }}
-                              type="button"
                             >
-                              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
-                                <Bot className="size-3.5" />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[0.9rem]">{agent.name}</span>
-                                <span className="block truncate text-[11px] text-[#8f8778]">
-                                  {agent.agent_info.role || "Assigned agent"} ·{" "}
-                                  {agent.agent_info.workspace?.mode ?? "chat"}
+                              <button
+                                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                                onClick={() => {
+                                  setSelectedAgentId(agent.id);
+                                  setActiveThreadId(null);
+                                  setMessages([]);
+                                  setOpenAgentMenuId(null);
+                                  setIsAgentListOpen(false);
+                                  closeMobileSidebar();
+                                }}
+                                type="button"
+                              >
+                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#312c27] text-[#ddd5c8]">
+                                  <Bot className="size-3.5" />
                                 </span>
-                              </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[0.9rem]">{agent.name}</span>
+                                  <span className="block truncate text-[11px] text-[#8f8778]">
+                                    {agent.agent_info.role || "Assigned agent"} ·{" "}
+                                    {agent.agent_info.workspace?.mode ?? "chat"}
+                                  </span>
+                                </span>
+                              </button>
                               {agent.is_system ? (
                                 <span className="text-[10px] uppercase tracking-[0.18em] text-[#8f8778]">
                                   System
                                 </span>
                               ) : null}
-                            </button>
+                              {currentUser.is_admin ? (
+                                <div
+                                  className="relative shrink-0"
+                                  ref={isMenuOpen ? agentMenuRef : undefined}
+                                >
+                                  <button
+                                    aria-label={`Agent actions for ${agent.name}`}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#8d8578] transition hover:bg-white/8 hover:text-[#ddd5c7]"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setOpenAgentMenuId((current) =>
+                                        current === agent.id ? null : agent.id,
+                                      );
+                                    }}
+                                    type="button"
+                                  >
+                                    <MoreHorizontal className="size-4" />
+                                  </button>
+
+                                  {isMenuOpen ? (
+                                    <div className="absolute right-0 top-9 z-10 min-w-36 rounded-2xl border border-white/10 bg-[#201d19] p-1 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+                                      <button
+                                        className="block w-full rounded-xl px-3 py-2 text-left text-sm text-[#ece4d7] transition hover:bg-white/6"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openEditAgentForm(agent);
+                                        }}
+                                        type="button"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        className="block w-full rounded-xl px-3 py-2 text-left text-sm text-[#f1b4a8] transition hover:bg-white/6 disabled:text-[#8d8578]"
+                                        disabled={agent.is_system || archivingAgentId === agent.id}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          promptArchiveAgent(agent);
+                                        }}
+                                        type="button"
+                                      >
+                                        {agent.is_system
+                                          ? "Archive unavailable"
+                                          : archivingAgentId === agent.id
+                                            ? "Archiving..."
+                                            : "Archive"}
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
                           );
                         })}
 
@@ -1432,7 +1678,11 @@ export default function HomePage() {
                                   className="w-full text-left"
                                   onClick={() => {
                                     setActiveThreadId(session.thread_id);
-                                    setSelectedAgentId(session.agent_id);
+                                    setSelectedAgentId(
+                                      activeAgentIds.has(session.agent_id)
+                                        ? session.agent_id
+                                        : agents[0]?.id ?? null,
+                                    );
                                     setOpenSessionMenuId(null);
                                     closeMobileSidebar();
                                   }}
@@ -1553,7 +1803,7 @@ export default function HomePage() {
                       Active workspace
                     </p>
                     <div className="truncate [font-family:var(--font-display)] text-[1.3rem] leading-none tracking-[-0.03em] text-[#efe7d8] sm:text-[1.45rem]">
-                      {activeAgent?.name ?? "Choose an agent"}
+                      {activeAgentName}
                     </div>
                   </div>
                 </div>

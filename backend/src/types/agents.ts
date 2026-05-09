@@ -29,10 +29,12 @@ export type AgentRecord = {
   prompt_version: number;
   system_prompt_generated_at: Date;
   is_system: boolean;
+  archived_at: Date | null;
   created_at: Date;
   updated_at: Date;
   assigned_roles: string[];
   assigned_user_ids: string[];
+  assigned_user_emails: string[];
 };
 
 export type AgentCreatePayload = {
@@ -43,3 +45,5 @@ export type AgentCreatePayload = {
   assigned_role_keys?: string[];
   assigned_user_emails?: string[];
 };
+
+export type AgentUpdatePayload = AgentCreatePayload;

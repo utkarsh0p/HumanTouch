@@ -19,6 +19,7 @@ const fullAgentSelect = `SELECT
   a.prompt_version,
   a.system_prompt_generated_at,
   a.is_system,
+  a.archived_at,
   a.created_at,
   a.updated_at,
   COALESCE(
@@ -30,12 +31,19 @@ const fullAgentSelect = `SELECT
     ARRAY_AGG(DISTINCT aua.user_id::TEXT)
     FILTER (WHERE aua.user_id IS NOT NULL),
     ARRAY[]::TEXT[]
-  ) AS assigned_user_ids
+  ) AS assigned_user_ids,
+  COALESCE(
+    ARRAY_AGG(DISTINCT u.email)
+    FILTER (WHERE u.email IS NOT NULL),
+    ARRAY[]::TEXT[]
+  ) AS assigned_user_emails
  FROM ${agentsTable} a
  LEFT JOIN ${roleAssignmentsTable} ara
    ON ara.agent_id = a.id
  LEFT JOIN ${userAssignmentsTable} aua
-   ON aua.agent_id = a.id`;
+   ON aua.agent_id = a.id
+ LEFT JOIN ${appSchema}.users u
+   ON u.id = aua.user_id`;
 
 export function ensureAdmin(user: AuthenticatedUser): void {
   if (!user.is_admin) {
@@ -80,6 +88,7 @@ export async function getAccessibleAgents(user: AuthenticatedUser) {
     return await query(
       `${fullAgentSelect}
        WHERE a.company_id = $1
+         AND a.archived_at IS NULL
        GROUP BY a.id
        ORDER BY a.is_system DESC, a.created_at ASC`,
       [user.company_id],
@@ -89,6 +98,7 @@ export async function getAccessibleAgents(user: AuthenticatedUser) {
   return await query(
     `${fullAgentSelect}
      WHERE a.company_id = $1
+       AND a.archived_at IS NULL
        AND (
          aua.user_id = $2
          OR ara.role_key = $3

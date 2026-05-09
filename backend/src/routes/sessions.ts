@@ -61,6 +61,10 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       reply.code(404);
       return { detail: "Agent not found." };
     }
+    if (agent.archived_at) {
+      reply.code(409);
+      return { detail: "Archived agents cannot be used for new sessions." };
+    }
     const canAccess = await canUserAccessAgent(request.currentUser, agentId);
     if (!canAccess) {
       reply.code(403);

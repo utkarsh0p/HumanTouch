@@ -750,6 +750,21 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   );
 }
 
+async function addAgentArchiving(): Promise<void> {
+  const appSchema = quoteIdentifier(settings.appSchema);
+
+  await pool.query(`
+    ALTER TABLE ${appSchema}.agents
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ NULL
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS agents_active_created_at_idx
+    ON ${appSchema}.agents (company_id, is_system DESC, created_at ASC)
+    WHERE archived_at IS NULL
+  `);
+}
+
 export async function connectToPostgres(): Promise<void> {
   if (!initializationPromise) {
     initializationPromise = runMigrations([
@@ -764,6 +779,10 @@ export async function connectToPostgres(): Promise<void> {
       {
         id: "003_seed_default_admin_credentials",
         run: updateSeededAdminCredentials,
+      },
+      {
+        id: "004_agent_archiving",
+        run: addAgentArchiving,
       },
     ]);
   }
