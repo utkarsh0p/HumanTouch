@@ -66,7 +66,7 @@ GEMINI_API_KEY=
 GOOGLE_API_KEY=
 GEMINI_MODEL=gemini-2.5-pro
 PORT=3001
-ALLOWED_ORIGINS=http://localhost:3000
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 ```
 
@@ -118,12 +118,17 @@ Behavior:
 - logout clears the cookie and deletes the matching server-side session row
 - protected routes read the current user from that cookie
 
+Local seeded admin credentials:
+
+- email: `utkarshsingh@gmail.com`
+- password: `utkarshsingh`
+
 For explicit dev impersonation, you can still send `x-dev-user-email` and the backend will load that user from the `users` table for the request.
 
 Example:
 
 ```bash
-curl -H "x-dev-user-email: admin@humantouch.local" http://localhost:3001/api/agents
+curl -H "x-dev-user-email: utkarshsingh@gmail.com" http://localhost:3001/api/agents
 ```
 
 ## ORM

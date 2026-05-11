@@ -33,6 +33,7 @@ async function start(): Promise<void> {
     host: "0.0.0.0",
     port: settings.port,
   });
+  app.log.info({ gemini_model: settings.geminiModel }, "Backend configuration loaded.");
 }
 
 start().catch((error) => {

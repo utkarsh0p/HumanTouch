@@ -135,12 +135,7 @@ function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
   };
 }
 
-async function resolveAssignments(
-  assignedRoleKeys: string[],
-  assignedUserEmails: string[],
-  companyId: string,
-) {
-  const assignedRoles = normalizeStringList(assignedRoleKeys);
+async function resolveUserAssignments(assignedUserEmails: string[], companyId: string) {
   const normalizedEmails = normalizeEmailList(assignedUserEmails);
   const resolvedUsers = await getUsersByEmails(normalizedEmails, companyId);
   const resolvedUserIds = normalizeStringList(resolvedUsers.map((user) => user.id));
@@ -152,10 +147,11 @@ async function resolveAssignments(
     throw new Error(`Employee not found for email: ${missingEmails.join(", ")}`);
   }
 
-  return {
-    assignedRoles,
-    resolvedUserIds,
-  };
+  return resolvedUserIds;
+}
+
+function resolveRoleAssignments(assignedRoleKeys: string[]) {
+  return normalizeStringList(assignedRoleKeys);
 }
 
 export async function listAgents(): Promise<AgentRecord[]> {
@@ -189,8 +185,8 @@ export async function createAgent(
   const slug = await buildUniqueSlug(name);
   const agentInfo = normalizeAgentInfo(payload);
   const companyId = actor?.company_id ?? defaultCompanyId;
-  const { assignedRoles, resolvedUserIds } = await resolveAssignments(
-    payload.assigned_role_keys ?? [],
+  const assignedRoles = resolveRoleAssignments(payload.assigned_role_keys ?? []);
+  const resolvedUserIds = await resolveUserAssignments(
     payload.assigned_user_emails ?? [],
     companyId,
   );
@@ -272,13 +268,16 @@ export async function updateAgent(
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name, agentId);
   const agentInfo = normalizeAgentInfo(payload);
-  const { assignedRoles, resolvedUserIds } = await resolveAssignments(
-    payload.assigned_role_keys ?? [],
-    payload.assigned_user_emails ?? [],
-    companyId,
-  );
   const systemPrompt = await compileAgentSystemPrompt(name, agentInfo);
   const pool = getPgPool();
+  const nextAssignedRoles =
+    payload.assigned_role_keys === undefined
+      ? null
+      : resolveRoleAssignments(payload.assigned_role_keys);
+  const nextResolvedUserIds =
+    payload.assigned_user_emails === undefined
+      ? null
+      : await resolveUserAssignments(payload.assigned_user_emails, companyId);
 
   await pool.query("BEGIN");
 
@@ -304,33 +303,38 @@ export async function updateAgent(
       throw new Error("Agent not found.");
     }
 
-    await pool.query(
-      `DELETE FROM ${roleAssignmentsTable}
-       WHERE agent_id = $1 AND company_id = $2`,
-      [agentId, companyId],
-    );
-    await pool.query(
-      `DELETE FROM ${userAssignmentsTable}
-       WHERE agent_id = $1 AND company_id = $2`,
-      [agentId, companyId],
-    );
-
-    for (const roleKey of assignedRoles) {
+    if (nextAssignedRoles !== null) {
       await pool.query(
-        `INSERT INTO ${roleAssignmentsTable}
-         (agent_id, company_id, role_key, created_at)
-         VALUES ($1, $2, $3, $4)`,
-        [agentId, companyId, roleKey, now],
+        `DELETE FROM ${roleAssignmentsTable}
+         WHERE agent_id = $1 AND company_id = $2`,
+        [agentId, companyId],
       );
+
+      for (const roleKey of nextAssignedRoles) {
+        await pool.query(
+          `INSERT INTO ${roleAssignmentsTable}
+           (agent_id, company_id, role_key, created_at)
+           VALUES ($1, $2, $3, $4)`,
+          [agentId, companyId, roleKey, now],
+        );
+      }
     }
 
-    for (const userId of resolvedUserIds) {
+    if (nextResolvedUserIds !== null) {
       await pool.query(
-        `INSERT INTO ${userAssignmentsTable}
-         (agent_id, company_id, user_id, created_at)
-         VALUES ($1, $2, $3, $4)`,
-        [agentId, companyId, userId, now],
+        `DELETE FROM ${userAssignmentsTable}
+         WHERE agent_id = $1 AND company_id = $2`,
+        [agentId, companyId],
       );
+
+      for (const userId of nextResolvedUserIds) {
+        await pool.query(
+          `INSERT INTO ${userAssignmentsTable}
+           (agent_id, company_id, user_id, created_at)
+           VALUES ($1, $2, $3, $4)`,
+          [agentId, companyId, userId, now],
+        );
+      }
     }
 
     await pool.query("COMMIT");

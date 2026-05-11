@@ -25,6 +25,16 @@ function expandAllowedOrigins(origins: string[]): string[] {
   return [...expanded];
 }
 
+function includeCommonDevOrigins(origins: string[]): string[] {
+  const devOrigins = [
+    "http://localhost:3000",
+    "http://localhost:3002",
+    "http://localhost:3003",
+  ];
+
+  return [...new Set([...origins, ...devOrigins])];
+}
+
 const envCandidates = [
   resolve(process.cwd(), ".env"),
   resolve(process.cwd(), "..", ".env"),
@@ -62,9 +72,11 @@ const envSchema = z
       googleApiKey,
       geminiModel: env.GEMINI_MODEL,
       allowedOrigins: expandAllowedOrigins(
-        env.ALLOWED_ORIGINS.split(",")
-          .map((origin) => origin.trim())
-          .filter(Boolean),
+        includeCommonDevOrigins(
+          env.ALLOWED_ORIGINS.split(",")
+            .map((origin) => origin.trim())
+            .filter(Boolean),
+        ),
       ),
     };
   });

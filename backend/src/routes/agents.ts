@@ -12,7 +12,14 @@ const createAgentSchema = z.object({
   assigned_role_keys: z.array(z.string().trim().min(1)).default([]),
   assigned_user_emails: z.array(z.string().trim().email()).default([]),
 });
-const updateAgentSchema = createAgentSchema;
+const updateAgentSchema = z.object({
+  name: z.string().trim().min(1),
+  purpose: z.string().trim().min(1),
+  allowed_tasks: z.string().trim().min(1),
+  restrictions: z.string().trim().min(1),
+  assigned_role_keys: z.array(z.string().trim().min(1)).optional(),
+  assigned_user_emails: z.array(z.string().trim().email()).optional(),
+});
 const agentParamsSchema = z.object({
   agentId: z.string().uuid(),
 });

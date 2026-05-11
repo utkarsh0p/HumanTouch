@@ -3,7 +3,11 @@ import { z } from "zod";
 
 import { settings } from "../config.js";
 import { query } from "../db/postgres.js";
-import { createUserInput, extractText, getAgentGraph } from "../langgraph/admin-agent.js";
+import {
+  createConversationInput,
+  extractText,
+  streamAgentResponseWithHistory,
+} from "../langgraph/admin-agent.js";
 import { generateSessionTitle } from "../langgraph/session-title.js";
 import { canUserAccessSession } from "../services/access.js";
 import { getAgentById } from "../services/agents.js";
@@ -16,6 +20,7 @@ const chatStreamSchema = z.object({
 const appSchema = `"${settings.appSchema.replaceAll('"', '""')}"`;
 const sessionTable = `${appSchema}.agent_sessions`;
 const messageTable = `${appSchema}.agent_messages`;
+const defaultSessionTitle = "New session";
 
 function writeSseEvent(
   writable: NodeJS.WritableStream,
@@ -59,9 +64,9 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
     );
 
     const nextTitle =
-      session.title === "New session"
+      session.title === defaultSessionTitle
         ? await generateSessionTitle(payload.message)
-        : session.title || "New session";
+        : session.title || defaultSessionTitle;
 
     await query(
       `UPDATE ${sessionTable}
@@ -98,20 +103,23 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         runtimePrompt.push("", "User style preferences:", session.user_prompt.trim());
       }
 
-      const agentGraph = await getAgentGraph(agent);
-      const stream = await agentGraph.stream(
-        createUserInput(payload.message, runtimePrompt.join("\n")),
-        {
-        configurable: { thread_id: payload.thread_id },
-        streamMode: "messages",
-        },
+      const conversationMessages = await query<{
+        role: "user" | "assistant";
+        content: string;
+      }>(
+        `SELECT role, content
+         FROM ${messageTable}
+         WHERE thread_id = $1
+           AND role IN ('user', 'assistant')
+         ORDER BY created_at ASC`,
+        [payload.thread_id],
       );
 
-      for await (const [chunk, metadata] of stream) {
-        if (metadata.langgraph_node !== "agent_executor") {
-          continue;
-        }
+      const stream = await streamAgentResponseWithHistory(
+        createConversationInput(runtimePrompt.join("\n"), conversationMessages),
+      );
 
+      for await (const chunk of stream) {
         const text = extractText(chunk.content);
         if (!text) {
           continue;
@@ -144,6 +152,15 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Streaming failed.";
+      request.log.error(
+        {
+          err: error,
+          thread_id: payload.thread_id,
+          agent_id: session.agent_id,
+          gemini_model: settings.geminiModel,
+        },
+        "Chat stream failed.",
+      );
       writeSseEvent(reply.raw, "error", { detail });
     } finally {
       reply.raw.end();

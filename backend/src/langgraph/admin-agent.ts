@@ -1,4 +1,5 @@
 import {
+  AIMessage,
   HumanMessage,
   SystemMessage,
   type BaseMessage,
@@ -65,6 +66,33 @@ export function createUserInput(
   return {
     messages: [new SystemMessage(context), new HumanMessage(message)],
   };
+}
+
+export async function streamAgentResponse(
+  message: string,
+  context: string,
+) {
+  return await llm.stream([new SystemMessage(context), new HumanMessage(message)]);
+}
+
+export async function streamAgentResponseWithHistory(
+  messages: BaseMessage[],
+) {
+  return await llm.stream(messages);
+}
+
+export function createConversationInput(
+  context: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+): BaseMessage[] {
+  return [
+    new SystemMessage(context),
+    ...messages.map((message) =>
+      message.role === "assistant"
+        ? new AIMessage(message.content)
+        : new HumanMessage(message.content),
+    ),
+  ];
 }
 
 export function extractText(content: unknown): string {

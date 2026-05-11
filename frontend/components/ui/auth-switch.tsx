@@ -123,6 +123,7 @@ export function AuthSwitch({
                   <p className="text-xs uppercase tracking-[0.18em] text-[#8d8578]">Admin seed</p>
                   <p className="mt-2 text-sm text-[#ede5d9]">Utkarsh Singh</p>
                   <p className="text-sm text-[#b7afa0]">utkarshsingh@gmail.com</p>
+                  <p className="text-sm text-[#b7afa0]">Password: utkarshsingh</p>
                 </div>
               </form>
 

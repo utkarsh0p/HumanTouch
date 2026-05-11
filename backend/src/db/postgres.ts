@@ -243,6 +243,7 @@ async function initializeDatabase(): Promise<void> {
   `);
 
   await seedDefaultCompanyAndUser(appSchema);
+  await updateSeededAdminCredentials();
   await backfillAgents(appSchema);
   await seedDefaultAdminAgent(appSchema);
   await backfillAssignments(appSchema);
@@ -421,6 +422,7 @@ async function updateSeededAdminCredentials(): Promise<void> {
 
 async function seedDefaultCompanyAndUser(appSchema: string): Promise<void> {
   const now = new Date();
+  const adminPasswordHash = hashPassword("utkarshsingh");
 
   await pool.query(
     `
@@ -436,7 +438,7 @@ async function seedDefaultCompanyAndUser(appSchema: string): Promise<void> {
     `
       INSERT INTO ${appSchema}.users
       (id, company_id, email, full_name, role_key, is_admin, auth_provider, password_hash, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, TRUE, 'local', NULL, $6, $6)
+      VALUES ($1, $2, $3, $4, $5, TRUE, 'local', $6, $7, $7)
       ON CONFLICT (id) DO UPDATE
       SET
         company_id = EXCLUDED.company_id,
@@ -444,9 +446,19 @@ async function seedDefaultCompanyAndUser(appSchema: string): Promise<void> {
         full_name = EXCLUDED.full_name,
         role_key = EXCLUDED.role_key,
         is_admin = TRUE,
+        auth_provider = 'local',
+        password_hash = EXCLUDED.password_hash,
         updated_at = EXCLUDED.updated_at
     `,
-    [defaultAdminUserId, defaultCompanyId, "admin@humantouch.local", "Admin User", "admin", now],
+    [
+      defaultAdminUserId,
+      defaultCompanyId,
+      "utkarshsingh@gmail.com",
+      "Utkarsh Singh",
+      "admin",
+      adminPasswordHash,
+      now,
+    ],
   );
 }
 

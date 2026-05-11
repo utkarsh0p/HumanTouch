@@ -279,7 +279,6 @@ export default function HomePage() {
   const [agentPurpose, setAgentPurpose] = useState("");
   const [agentAllowedTasks, setAgentAllowedTasks] = useState("");
   const [agentRestrictions, setAgentRestrictions] = useState("");
-  const [roleDraft, setRoleDraft] = useState("");
   const [employeeEmailDraft, setEmployeeEmailDraft] = useState("");
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -442,7 +441,6 @@ export default function HomePage() {
     setAgentPurpose("");
     setAgentAllowedTasks("");
     setAgentRestrictions("");
-    setRoleDraft("");
     setEmployeeEmailDraft("");
   }
 
@@ -459,7 +457,6 @@ export default function HomePage() {
     setAgentPurpose(agent.agent_info.goal ?? "");
     setAgentAllowedTasks(agent.agent_info.responsibilities ?? "");
     setAgentRestrictions(agent.agent_info.guardrails ?? "");
-    setRoleDraft(agent.assigned_roles.join(", "));
     setEmployeeEmailDraft(agent.assigned_user_emails.join(", "));
     setEditingAgentId(agent.id);
     setAgentFormMode("edit");
@@ -890,9 +887,12 @@ export default function HomePage() {
       const decoder = new TextDecoder();
       let buffer = "";
 
+      let streamFailure: string | null = null;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
+          buffer += decoder.decode();
           break;
         }
 
@@ -901,8 +901,22 @@ export default function HomePage() {
         buffer = frames.pop() ?? "";
 
         for (const frame of frames) {
-          applySseFrame(frame);
+          const errorDetail = applySseFrame(frame);
+          if (errorDetail) {
+            streamFailure = errorDetail;
+          }
         }
+      }
+
+      if (buffer.trim()) {
+        const errorDetail = applySseFrame(buffer);
+        if (errorDetail) {
+          streamFailure = errorDetail;
+        }
+      }
+
+      if (streamFailure) {
+        throw new Error(streamFailure);
       }
 
       await loadSessions();
@@ -926,7 +940,7 @@ export default function HomePage() {
     await submitMessage();
   }
 
-  function applySseFrame(frame: string) {
+  function applySseFrame(frame: string): string | null {
     const lines = frame.split("\n");
     let eventName = "message";
     let payload = "";
@@ -937,12 +951,12 @@ export default function HomePage() {
       }
 
       if (line.startsWith("data:")) {
-        payload += line.slice(5).trim();
+        payload += `${payload ? "\n" : ""}${line.slice(5).trimStart()}`;
       }
     }
 
     if (!payload) {
-      return;
+      return null;
     }
 
     if (eventName === "token") {
@@ -969,7 +983,31 @@ export default function HomePage() {
           scrollTranscriptToBottom("auto");
         }
       });
+
+      return null;
     }
+
+    if (eventName === "error") {
+      const parsed = JSON.parse(payload) as { detail?: string };
+      return parsed.detail ?? "Streaming failed.";
+    }
+
+    if (eventName === "done") {
+      const parsed = JSON.parse(payload) as { thread_id?: string; title?: string };
+      if (parsed.thread_id && parsed.title) {
+        setSessions((current) =>
+          current.map((session) =>
+            session.thread_id === parsed.thread_id
+              ? { ...session, title: parsed.title ?? session.title }
+              : session,
+          ),
+        );
+      }
+
+      return null;
+    }
+
+    return null;
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1002,14 +1040,14 @@ export default function HomePage() {
           purpose: agentPurpose,
           allowed_tasks: agentAllowedTasks,
           restrictions: agentRestrictions,
-          assigned_role_keys: roleDraft
-            .split(",")
-            .map((role) => role.trim())
-            .filter(Boolean),
-          assigned_user_emails: employeeEmailDraft
-            .split(",")
-            .map((email) => email.trim().toLowerCase())
-            .filter(Boolean),
+          ...(!isEditingSystemAgent
+            ? {
+                assigned_user_emails: employeeEmailDraft
+                  .split(",")
+                  .map((email) => email.trim().toLowerCase())
+                  .filter(Boolean),
+              }
+            : {}),
         }),
       });
 
@@ -1132,6 +1170,10 @@ export default function HomePage() {
   const sidebarSelectionAgentId = activeSession?.agent_id ?? selectedAgentId;
   const activeAgentIds = new Set(agents.map((agent) => agent.id));
   const activeAgentName = activeAgent?.name ?? (activeSession ? "Archived agent" : "Choose an agent");
+  const editingAgent = editingAgentId
+    ? agents.find((agent) => agent.id === editingAgentId) ?? null
+    : null;
+  const isEditingSystemAgent = Boolean(editingAgent?.is_system);
   const filteredSessions = sessions.filter((session) => {
     if (!sidebarSelectionAgentId) {
       return !activeAgentIds.has(session.agent_id);
@@ -1310,7 +1352,7 @@ export default function HomePage() {
         ) : null}
 
         {currentUser.is_admin && isAgentFormOpen ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 px-4 py-4 sm:py-6">
             <button
               aria-label={agentFormMode === "edit" ? "Close edit agent dialog" : "Close create agent dialog"}
               className="absolute inset-0"
@@ -1322,105 +1364,103 @@ export default function HomePage() {
               }}
               type="button"
             />
-            <form
-              className="relative z-10 w-full max-w-xl rounded-[2rem] border border-white/10 bg-[#26231f] p-5 shadow-[0_35px_100px_rgba(0,0,0,0.45)]"
-              onSubmit={handleSubmitAgent}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[#9d9586]">
-                    {agentFormMode === "edit" ? "Edit Agent" : "New Agent"}
-                  </p>
-                  <h2 className="mt-2 [font-family:var(--font-display)] text-[1.65rem] leading-none tracking-[-0.03em] text-[#f2ede3]">
-                    {agentFormMode === "edit" ? "Update this agent" : "Create an agent"}
-                  </h2>
+            <div className="relative z-10 flex min-h-full items-start justify-center sm:items-center">
+              <form
+                className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-[#26231f] p-5 shadow-[0_35px_100px_rgba(0,0,0,0.45)] sm:max-h-[calc(100vh-3rem)]"
+                onSubmit={handleSubmitAgent}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.24em] text-[#9d9586]">
+                      {agentFormMode === "edit" ? "Edit Agent" : "New Agent"}
+                    </p>
+                    <h2 className="mt-2 [font-family:var(--font-display)] text-[1.65rem] leading-none tracking-[-0.03em] text-[#f2ede3]">
+                      {agentFormMode === "edit" ? "Update this agent" : "Create an agent"}
+                    </h2>
+                  </div>
+                  <button
+                    aria-label={agentFormMode === "edit" ? "Close edit agent dialog" : "Close create agent dialog"}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-[#bfb7ab] transition hover:bg-white/5"
+                    onClick={() => {
+                      resetCreateAgentForm();
+                      setEditingAgentId(null);
+                      setAgentFormMode("create");
+                      setIsAgentFormOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <X className="size-4" />
+                  </button>
                 </div>
-                <button
-                  aria-label={agentFormMode === "edit" ? "Close edit agent dialog" : "Close create agent dialog"}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-[#bfb7ab] transition hover:bg-white/5"
-                  onClick={() => {
-                    resetCreateAgentForm();
-                    setEditingAgentId(null);
-                    setAgentFormMode("create");
-                    setIsAgentFormOpen(false);
-                  }}
-                  type="button"
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-              <div className="mt-4 space-y-3">
-                <input
-                  className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                  onChange={(event) => setAgentName(event.target.value)}
-                  placeholder="Agent name"
-                  value={agentName}
-                />
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                  onChange={(event) => setAgentPurpose(event.target.value)}
-                  placeholder="What should this agent help employees with?"
-                  value={agentPurpose}
-                />
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                  onChange={(event) => setAgentAllowedTasks(event.target.value)}
-                  placeholder="What tasks is it allowed to do?"
-                  value={agentAllowedTasks}
-                />
-                <textarea
-                  className="min-h-20 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                  onChange={(event) => setAgentRestrictions(event.target.value)}
-                  placeholder="What should it avoid or never do?"
-                  value={agentRestrictions}
-                />
-                <input
-                  className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                  onChange={(event) => setRoleDraft(event.target.value)}
-                  placeholder="Assign to employee roles, optional"
-                  value={roleDraft}
-                />
-                <input
-                  className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
-                  onChange={(event) => setEmployeeEmailDraft(event.target.value)}
-                  placeholder="Assign to employee emails, optional"
-                  value={employeeEmailDraft}
-                />
-              </div>
-              <div className="mt-5 flex items-center justify-between gap-3">
-                <button
-                  className="text-sm text-[#a79f91]"
-                  onClick={() => {
-                    resetCreateAgentForm();
-                    setEditingAgentId(null);
-                    setAgentFormMode("create");
-                    setIsAgentFormOpen(false);
-                  }}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                <Button
-                  className="rounded-full bg-[#f0ece4] px-4 text-[#1c1b18] hover:bg-[#fffaf0]"
-                  disabled={
-                    isCreatingAgent ||
-                    !agentName.trim() ||
-                    !agentPurpose.trim() ||
-                    !agentAllowedTasks.trim() ||
-                    !agentRestrictions.trim()
-                  }
-                  type="submit"
-                >
-                  {isCreatingAgent
-                    ? agentFormMode === "edit"
-                      ? "Saving..."
-                      : "Creating..."
-                    : agentFormMode === "edit"
-                      ? "Save changes"
-                      : "Save"}
-                </Button>
-              </div>
-            </form>
+                <div className="mt-4 space-y-3 overflow-y-auto pr-1">
+                  <input
+                    className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                    onChange={(event) => setAgentName(event.target.value)}
+                    placeholder="Agent name"
+                    value={agentName}
+                  />
+                  <textarea
+                    className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                    onChange={(event) => setAgentPurpose(event.target.value)}
+                    placeholder="What should this agent help employees with?"
+                    value={agentPurpose}
+                  />
+                  <textarea
+                    className="min-h-24 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                    onChange={(event) => setAgentAllowedTasks(event.target.value)}
+                    placeholder="What tasks is it allowed to do?"
+                    value={agentAllowedTasks}
+                  />
+                  <textarea
+                    className="min-h-20 w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                    onChange={(event) => setAgentRestrictions(event.target.value)}
+                    placeholder="What should it avoid or never do?"
+                    value={agentRestrictions}
+                  />
+                  {!isEditingSystemAgent ? (
+                    <input
+                      className="w-full rounded-2xl border border-white/8 bg-[#1e1b18] px-3 py-2.5 text-sm text-[#f2ede3] outline-none placeholder:text-[#7f786b]"
+                      onChange={(event) => setEmployeeEmailDraft(event.target.value)}
+                      placeholder="Enter the assignee email"
+                      value={employeeEmailDraft}
+                    />
+                  ) : null}
+                </div>
+                <div className="mt-5 flex shrink-0 items-center justify-between gap-3">
+                  <button
+                    className="text-sm text-[#a79f91]"
+                    onClick={() => {
+                      resetCreateAgentForm();
+                      setEditingAgentId(null);
+                      setAgentFormMode("create");
+                      setIsAgentFormOpen(false);
+                    }}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <Button
+                    className="rounded-full bg-[#f0ece4] px-4 text-[#1c1b18] hover:bg-[#fffaf0]"
+                    disabled={
+                      isCreatingAgent ||
+                      !agentName.trim() ||
+                      !agentPurpose.trim() ||
+                      !agentAllowedTasks.trim() ||
+                      !agentRestrictions.trim()
+                    }
+                    type="submit"
+                  >
+                    {isCreatingAgent
+                      ? agentFormMode === "edit"
+                        ? "Saving..."
+                        : "Creating..."
+                      : agentFormMode === "edit"
+                        ? "Save changes"
+                        : "Save"}
+                  </Button>
+                </div>
+              </form>
+            </div>
           </div>
         ) : null}
 
@@ -1579,21 +1619,19 @@ export default function HomePage() {
                                       >
                                         Edit
                                       </button>
-                                      <button
-                                        className="block w-full rounded-xl px-3 py-2 text-left text-sm text-[#f1b4a8] transition hover:bg-white/6 disabled:text-[#8d8578]"
-                                        disabled={agent.is_system || archivingAgentId === agent.id}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          promptArchiveAgent(agent);
-                                        }}
-                                        type="button"
-                                      >
-                                        {agent.is_system
-                                          ? "Archive unavailable"
-                                          : archivingAgentId === agent.id
-                                            ? "Archiving..."
-                                            : "Archive"}
-                                      </button>
+                                      {!agent.is_system ? (
+                                        <button
+                                          className="block w-full rounded-xl px-3 py-2 text-left text-sm text-[#f1b4a8] transition hover:bg-white/6 disabled:text-[#8d8578]"
+                                          disabled={archivingAgentId === agent.id}
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            promptArchiveAgent(agent);
+                                          }}
+                                          type="button"
+                                        >
+                                          {archivingAgentId === agent.id ? "Archiving..." : "Archive"}
+                                        </button>
+                                      ) : null}
                                     </div>
                                   ) : null}
                                 </div>
