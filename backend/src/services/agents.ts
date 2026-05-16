@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
-import { settings } from "../config.js";
 import { defaultAdminUserId, defaultCompanyId } from "../constants/seed.js";
-import { getPgPool, query } from "../db/postgres.js";
+import { prisma } from "../db/prisma.js";
 import { compileAgentSystemPrompt } from "../langgraph/agent-prompt-compiler.js";
 import { getUsersByEmails } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
@@ -13,51 +13,50 @@ import type {
   AgentUpdatePayload,
 } from "../types/agents.js";
 
-const appSchema = `"${settings.appSchema.replaceAll('"', '""')}"`;
-const agentsTable = `${appSchema}.agents`;
-const roleAssignmentsTable = `${appSchema}.agent_role_assignments`;
-const userAssignmentsTable = `${appSchema}.agent_user_assignments`;
-const usersTable = `${appSchema}.users`;
+const agentInclude = {
+  roleAssignments: true,
+  userAssignments: {
+    include: {
+      user: true,
+    },
+  },
+} satisfies Prisma.AgentInclude;
 
-type AgentRow = AgentRecord;
+type AgentWithAssignments = Prisma.AgentGetPayload<{
+  include: typeof agentInclude;
+}>;
 
-const baseAgentSelect = `SELECT
-   a.id,
-   a.company_id,
-   a.created_by_user_id,
-   a.updated_by_user_id,
-   a.name,
-   a.slug,
-   a.agent_info,
-   a.system_prompt,
-   a.prompt_version,
-   a.system_prompt_generated_at,
-   a.is_system,
-   a.archived_at,
-   a.created_at,
-   a.updated_at,
-   COALESCE(
-     ARRAY_AGG(DISTINCT ar.role_key)
-     FILTER (WHERE ar.role_key IS NOT NULL),
-     ARRAY[]::TEXT[]
-   ) AS assigned_roles,
-   COALESCE(
-     ARRAY_AGG(DISTINCT au.user_id::TEXT)
-     FILTER (WHERE au.user_id IS NOT NULL),
-     ARRAY[]::TEXT[]
-   ) AS assigned_user_ids,
-   COALESCE(
-     ARRAY_AGG(DISTINCT u.email)
-     FILTER (WHERE u.email IS NOT NULL),
-     ARRAY[]::TEXT[]
-   ) AS assigned_user_emails
- FROM ${agentsTable} a
- LEFT JOIN ${roleAssignmentsTable} ar
-   ON ar.agent_id = a.id
- LEFT JOIN ${userAssignmentsTable} au
-   ON au.agent_id = a.id
- LEFT JOIN ${usersTable} u
-   ON u.id = au.user_id`;
+export function toAgentRecord(agent: AgentWithAssignments): AgentRecord {
+  const assignedRoles = [
+    ...new Set(agent.roleAssignments.map((assignment) => assignment.roleKey)),
+  ];
+  const assignedUserIds = [
+    ...new Set(agent.userAssignments.map((assignment) => assignment.userId)),
+  ];
+  const assignedUserEmails = [
+    ...new Set(agent.userAssignments.map((assignment) => assignment.user.email)),
+  ];
+
+  return {
+    id: agent.id,
+    company_id: agent.companyId,
+    created_by_user_id: agent.createdByUserId,
+    updated_by_user_id: agent.updatedByUserId,
+    name: agent.name,
+    slug: agent.slug,
+    agent_info: agent.agentInfo as AgentInfo,
+    system_prompt: agent.systemPrompt,
+    prompt_version: agent.promptVersion,
+    system_prompt_generated_at: agent.systemPromptGeneratedAt,
+    is_system: agent.isSystem,
+    archived_at: agent.archivedAt,
+    created_at: agent.createdAt,
+    updated_at: agent.updatedAt,
+    assigned_roles: assignedRoles,
+    assigned_user_ids: assignedUserIds,
+    assigned_user_emails: assignedUserEmails,
+  };
+}
 
 function slugify(input: string): string {
   return input
@@ -90,13 +89,13 @@ function deriveRoleFromName(name: string): string {
 
 async function buildUniqueSlug(name: string, excludeAgentId?: string): Promise<string> {
   const baseSlug = slugify(name) || "agent";
-  const matches = await query<{ slug: string }>(
-    `SELECT slug
-     FROM ${agentsTable}
-     WHERE (slug = $1 OR slug LIKE $2)
-       AND ($3::uuid IS NULL OR id <> $3::uuid)`,
-    [baseSlug, `${baseSlug}-%`, excludeAgentId ?? null],
-  );
+  const matches = await prisma.agent.findMany({
+    where: {
+      OR: [{ slug: baseSlug }, { slug: { startsWith: `${baseSlug}-` } }],
+      ...(excludeAgentId ? { id: { not: excludeAgentId } } : {}),
+    },
+    select: { slug: true },
+  });
 
   if (!matches.some((match) => match.slug === baseSlug)) {
     return baseSlug;
@@ -155,24 +154,21 @@ function resolveRoleAssignments(assignedRoleKeys: string[]) {
 }
 
 export async function listAgents(): Promise<AgentRecord[]> {
-  const rows = await query<AgentRow>(
-    `${baseAgentSelect}
-     GROUP BY a.id
-     ORDER BY a.is_system DESC, a.created_at ASC`,
-  );
+  const agents = await prisma.agent.findMany({
+    include: agentInclude,
+    orderBy: [{ isSystem: "desc" }, { createdAt: "asc" }],
+  });
 
-  return rows satisfies AgentRecord[];
+  return agents.map(toAgentRecord);
 }
 
 export async function getAgentById(agentId: string): Promise<AgentRecord | null> {
-  const [agent] = await query<AgentRow>(
-    `${baseAgentSelect}
-     WHERE a.id = $1
-     GROUP BY a.id`,
-    [agentId],
-  );
+  const agent = await prisma.agent.findUnique({
+    where: { id: agentId },
+    include: agentInclude,
+  });
 
-  return agent ?? null;
+  return agent ? toAgentRecord(agent) : null;
 }
 
 export async function createAgent(
@@ -192,58 +188,49 @@ export async function createAgent(
   );
   const systemPrompt = await compileAgentSystemPrompt(name, agentInfo);
 
-  await query(
-    `INSERT INTO ${agentsTable}
-     (
-       id,
-       company_id,
-       created_by_user_id,
-       updated_by_user_id,
-       name,
-       slug,
-       agent_info,
-       system_prompt,
-       prompt_version,
-       system_prompt_generated_at,
-       is_system,
-       created_at,
-       updated_at
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $10, $10)`,
-    [
-      id,
-      companyId,
-      actor?.id ?? defaultAdminUserId,
-      actor?.id ?? defaultAdminUserId,
-      name,
-      slug,
-      JSON.stringify(agentInfo),
-      systemPrompt,
-      1,
-      now,
-      false,
-    ],
-  );
+  await prisma.$transaction(async (tx) => {
+    await tx.agent.create({
+      data: {
+        id,
+        companyId,
+        createdByUserId: actor?.id ?? defaultAdminUserId,
+        updatedByUserId: actor?.id ?? defaultAdminUserId,
+        name,
+        slug,
+        agentInfo: agentInfo as unknown as Prisma.InputJsonValue,
+        systemPrompt,
+        promptVersion: 1,
+        systemPromptGeneratedAt: now,
+        isSystem: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
 
-  for (const roleKey of assignedRoles) {
-    await query(
-      `INSERT INTO ${roleAssignmentsTable}
-       (agent_id, company_id, role_key, created_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT DO NOTHING`,
-      [id, companyId, roleKey, now],
-    );
-  }
+    if (assignedRoles.length > 0) {
+      await tx.agentRoleAssignment.createMany({
+        data: assignedRoles.map((roleKey) => ({
+          agentId: id,
+          companyId,
+          roleKey,
+          createdAt: now,
+        })),
+        skipDuplicates: true,
+      });
+    }
 
-  for (const userId of resolvedUserIds) {
-    await query(
-      `INSERT INTO ${userAssignmentsTable}
-       (agent_id, company_id, user_id, created_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (agent_id, user_id) DO NOTHING`,
-      [id, companyId, userId, now],
-    );
-  }
+    if (resolvedUserIds.length > 0) {
+      await tx.agentUserAssignment.createMany({
+        data: resolvedUserIds.map((userId) => ({
+          agentId: id,
+          companyId,
+          userId,
+          createdAt: now,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  });
 
   const agent = await getAgentById(id);
   if (!agent) {
@@ -263,13 +250,14 @@ export async function updateAgent(
     throw new Error("Agent not found.");
   }
 
+  // The seeded Admin agent is the MVP stand-in for a customer-created admin agent:
+  // it stays editable, but archive/removal remains blocked below.
   const now = new Date();
   const companyId = actor.company_id;
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name, agentId);
   const agentInfo = normalizeAgentInfo(payload);
   const systemPrompt = await compileAgentSystemPrompt(name, agentInfo);
-  const pool = getPgPool();
   const nextAssignedRoles =
     payload.assigned_role_keys === undefined
       ? null
@@ -279,69 +267,70 @@ export async function updateAgent(
       ? null
       : await resolveUserAssignments(payload.assigned_user_emails, companyId);
 
-  await pool.query("BEGIN");
+  await prisma.$transaction(async (tx) => {
+    const updateResult = await tx.agent.updateMany({
+      where: {
+        id: agentId,
+        companyId,
+      },
+      data: {
+        name,
+        slug,
+        agentInfo: agentInfo as unknown as Prisma.InputJsonValue,
+        systemPrompt,
+        promptVersion: {
+          increment: 1,
+        },
+        systemPromptGeneratedAt: now,
+        updatedByUserId: actor.id,
+        updatedAt: now,
+      },
+    });
 
-  try {
-    const updateResult = await pool.query(
-      `UPDATE ${agentsTable}
-       SET
-         name = $3,
-         slug = $4,
-         agent_info = $5::jsonb,
-         system_prompt = $6,
-         prompt_version = prompt_version + 1,
-         system_prompt_generated_at = $7,
-         updated_by_user_id = $8,
-         updated_at = $7
-       WHERE id = $1
-         AND company_id = $2
-       RETURNING id`,
-      [agentId, companyId, name, slug, JSON.stringify(agentInfo), systemPrompt, now, actor.id],
-    );
-
-    if (updateResult.rowCount === 0) {
+    if (updateResult.count === 0) {
       throw new Error("Agent not found.");
     }
 
     if (nextAssignedRoles !== null) {
-      await pool.query(
-        `DELETE FROM ${roleAssignmentsTable}
-         WHERE agent_id = $1 AND company_id = $2`,
-        [agentId, companyId],
-      );
+      await tx.agentRoleAssignment.deleteMany({
+        where: {
+          agentId,
+          companyId,
+        },
+      });
 
-      for (const roleKey of nextAssignedRoles) {
-        await pool.query(
-          `INSERT INTO ${roleAssignmentsTable}
-           (agent_id, company_id, role_key, created_at)
-           VALUES ($1, $2, $3, $4)`,
-          [agentId, companyId, roleKey, now],
-        );
+      if (nextAssignedRoles.length > 0) {
+        await tx.agentRoleAssignment.createMany({
+          data: nextAssignedRoles.map((roleKey) => ({
+            agentId,
+            companyId,
+            roleKey,
+            createdAt: now,
+          })),
+        });
       }
     }
 
     if (nextResolvedUserIds !== null) {
-      await pool.query(
-        `DELETE FROM ${userAssignmentsTable}
-         WHERE agent_id = $1 AND company_id = $2`,
-        [agentId, companyId],
-      );
+      await tx.agentUserAssignment.deleteMany({
+        where: {
+          agentId,
+          companyId,
+        },
+      });
 
-      for (const userId of nextResolvedUserIds) {
-        await pool.query(
-          `INSERT INTO ${userAssignmentsTable}
-           (agent_id, company_id, user_id, created_at)
-           VALUES ($1, $2, $3, $4)`,
-          [agentId, companyId, userId, now],
-        );
+      if (nextResolvedUserIds.length > 0) {
+        await tx.agentUserAssignment.createMany({
+          data: nextResolvedUserIds.map((userId) => ({
+            agentId,
+            companyId,
+            userId,
+            createdAt: now,
+          })),
+        });
       }
     }
-
-    await pool.query("COMMIT");
-  } catch (error) {
-    await pool.query("ROLLBACK");
-    throw error;
-  }
+  });
 
   const updatedAgent = await getAgentById(agentId);
   if (!updatedAgent) {
@@ -366,12 +355,17 @@ export async function archiveAgent(
     return existingAgent;
   }
 
-  await query(
-    `UPDATE ${agentsTable}
-     SET archived_at = NOW(), updated_at = NOW(), updated_by_user_id = $3
-     WHERE id = $1 AND company_id = $2`,
-    [agentId, actor.company_id, actor.id],
-  );
+  await prisma.agent.updateMany({
+    where: {
+      id: agentId,
+      companyId: actor.company_id,
+    },
+    data: {
+      archivedAt: new Date(),
+      updatedAt: new Date(),
+      updatedByUserId: actor.id,
+    },
+  });
 
   const archivedAgent = await getAgentById(agentId);
   if (!archivedAgent) {

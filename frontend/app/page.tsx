@@ -1585,7 +1585,7 @@ export default function HomePage() {
                               </button>
                               {agent.is_system ? (
                                 <span className="text-[10px] uppercase tracking-[0.18em] text-[#8f8778]">
-                                  System
+                                  Built-in
                                 </span>
                               ) : null}
                               {currentUser.is_admin ? (

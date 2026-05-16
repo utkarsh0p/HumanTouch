@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Company {
+  id        String   @id @db.Uuid
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  users              User[]
+  agents             Agent[]
+  agentSessions      AgentSession[]
+  agentMessages      AgentMessage[]
+  agentRoleAssignments AgentRoleAssignment[]
+  agentUserAssignments AgentUserAssignment[]
+
+  @@map("companies")
+}
+
+model User {
+  id           String   @id @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  email        String   @unique
+  fullName     String   @map("full_name")
+  roleKey      String   @map("role_key")
+  isAdmin      Boolean  @default(false) @map("is_admin")
+  authProvider String   @default("local") @map("auth_provider")
+  passwordHash String?  @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  company              Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAgents        Agent[]               @relation("AgentCreatedBy")
+  updatedAgents        Agent[]               @relation("AgentUpdatedBy")
+  authSessions         AuthSession[]
+  agentSessions        AgentSession[]
+  agentUserAssignments AgentUserAssignment[]
+
+  @@map("users")
+}
+
+model AuthSession {
+  id         String   @id @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  tokenHash  String   @unique @map("token_hash")
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "auth_sessions_user_id_idx")
+  @@index([expiresAt], map: "auth_sessions_expires_at_idx")
+  @@map("auth_sessions")
+}
+
+model Agent {
+  id                      String    @id @db.Uuid
+  companyId               String    @map("company_id") @db.Uuid
+  createdByUserId         String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId         String    @map("updated_by_user_id") @db.Uuid
+  name                    String
+  slug                    String    @unique
+  purpose                 String    @default("")
+  prompt                  String    @default("")
+  role                    String    @default("Admin")
+  goal                    String    @default("")
+  responsibilities        String    @default("")
+  permissions             String    @default("")
+  guardrails              String    @default("")
+  workStyle               String    @default("") @map("work_style")
+  agentInfo               Json      @default("{}") @map("agent_info") @db.JsonB
+  systemPrompt            String    @default("") @map("system_prompt")
+  promptVersion           Int       @default(1) @map("prompt_version")
+  systemPromptGeneratedAt DateTime  @default(now()) @map("system_prompt_generated_at") @db.Timestamptz
+  isSystem                Boolean   @default(false) @map("is_system")
+  archivedAt              DateTime? @map("archived_at") @db.Timestamptz
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  company             Company               @relation(fields: [companyId], references: [id])
+  createdByUser       User                  @relation("AgentCreatedBy", fields: [createdByUserId], references: [id])
+  updatedByUser       User                  @relation("AgentUpdatedBy", fields: [updatedByUserId], references: [id])
+  roleAssignments     AgentRoleAssignment[]
+  userAssignments     AgentUserAssignment[]
+  sessions            AgentSession[]
+
+  @@index([slug], map: "agents_slug_idx")
+  @@index([companyId, isSystem, createdAt], map: "agents_active_created_at_idx")
+  @@map("agents")
+}
+
+model AgentRoleAssignment {
+  agentId   String   @map("agent_id") @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  roleKey   String   @map("role_key")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, roleKey])
+  @@index([roleKey], map: "agent_role_assignments_role_key_idx")
+  @@map("agent_role_assignments")
+}
+
+model AgentUserAssignment {
+  agentId   String   @map("agent_id") @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, userId])
+  @@index([userId], map: "agent_user_assignments_user_id_idx")
+  @@map("agent_user_assignments")
+}
+
+model AgentSession {
+  threadId         String   @id @map("thread_id") @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  createdByUserId  String   @map("created_by_user_id") @db.Uuid
+  title            String
+  agentId          String   @map("agent_id") @db.Uuid
+  userPrompt       String?  @map("user_prompt")
+  systemPromptUsed String   @default("") @map("system_prompt_used")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  createdByUser User           @relation(fields: [createdByUserId], references: [id])
+  agent         Agent          @relation(fields: [agentId], references: [id])
+  messages      AgentMessage[]
+
+  @@index([updatedAt(sort: Desc)], map: "agent_sessions_updated_at_idx")
+  @@map("agent_sessions")
+}
+
+model AgentMessage {
+  id        BigInt   @id @default(autoincrement())
+  companyId String   @map("company_id") @db.Uuid
+  threadId  String   @map("thread_id") @db.Uuid
+  role      String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  company Company      @relation(fields: [companyId], references: [id])
+  session AgentSession @relation(fields: [threadId], references: [threadId], onDelete: Cascade)
+
+  @@index([threadId, createdAt], map: "agent_messages_thread_created_at_idx")
+  @@map("agent_messages")
+}

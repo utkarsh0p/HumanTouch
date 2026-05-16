@@ -1,22 +1,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import { settings } from "../config.js";
-import { query } from "../db/postgres.js";
+import { prisma } from "../db/prisma.js";
 import { getUserById } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
-
-const appSchema = `"${settings.appSchema.replaceAll('"', '""')}"`;
-const authSessionsTable = `${appSchema}.auth_sessions`;
 
 const AUTH_COOKIE_NAME = "humantouch_session";
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
-
-type AuthSessionRow = {
-  user_id: string;
-  expires_at: Date;
-};
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -77,12 +68,14 @@ export async function createAuthSession(userId: string): Promise<string> {
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
-  await query(
-    `INSERT INTO ${authSessionsTable}
-     (id, user_id, token_hash, expires_at, created_at, last_seen_at)
-     VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-    [randomUUID(), userId, tokenHash, expiresAt],
-  );
+  await prisma.authSession.create({
+    data: {
+      id: randomUUID(),
+      userId,
+      tokenHash,
+      expiresAt,
+    },
+  });
 
   return token;
 }
@@ -96,33 +89,31 @@ export async function getAuthenticatedUserFromRequest(
     return null;
   }
 
-  const [session] = await query<AuthSessionRow>(
-    `SELECT user_id, expires_at
-     FROM ${authSessionsTable}
-     WHERE token_hash = $1`,
-    [hashToken(token)],
-  );
+  const tokenHash = hashToken(token);
+  const session = await prisma.authSession.findUnique({
+    where: { tokenHash },
+  });
   if (!session) {
     return null;
   }
 
-  if (new Date(session.expires_at).getTime() <= Date.now()) {
+  if (new Date(session.expiresAt).getTime() <= Date.now()) {
     await revokeAuthSessionByToken(token);
     return null;
   }
 
-  await query(
-    `UPDATE ${authSessionsTable}
-     SET last_seen_at = NOW()
-     WHERE token_hash = $1`,
-    [hashToken(token)],
-  );
+  await prisma.authSession.update({
+    where: { tokenHash },
+    data: { lastSeenAt: new Date() },
+  });
 
-  return await getUserById(session.user_id);
+  return await getUserById(session.userId);
 }
 
 export async function revokeAuthSessionByToken(token: string): Promise<void> {
-  await query(`DELETE FROM ${authSessionsTable} WHERE token_hash = $1`, [hashToken(token)]);
+  await prisma.authSession.deleteMany({
+    where: { tokenHash: hashToken(token) },
+  });
 }
 
 export async function revokeAuthSessionFromRequest(request: FastifyRequest): Promise<void> {

@@ -2,13 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { settings } from "../config.js";
 import {
   defaultAdminAgentId,
   defaultAdminUserId,
   defaultCompanyId,
 } from "../constants/seed.js";
-import { query } from "../db/postgres.js";
+import { prisma } from "../db/prisma.js";
 import { canUserAccessAgent, canUserAccessSession } from "../services/access.js";
 import { getAgentById } from "../services/agents.js";
 import type { MessageRecord, SessionRecord } from "../types/chat.js";
@@ -31,26 +30,37 @@ const updateSessionSchema = z.object({
   title: z.string().trim().min(1),
 });
 
+function toSessionRecord(session: {
+  threadId: string;
+  title: string;
+  createdAt: Date;
+  updatedAt: Date;
+  agentId: string;
+  userPrompt: string | null;
+  systemPromptUsed: string;
+}): SessionRecord {
+  return {
+    thread_id: session.threadId,
+    title: session.title,
+    created_at: session.createdAt,
+    updated_at: session.updatedAt,
+    agent_id: session.agentId,
+    user_prompt: session.userPrompt,
+    system_prompt_used: session.systemPromptUsed,
+  };
+}
+
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/sessions", async (request) => {
-    const sessions = request.currentUser.is_admin
-      ? await query<SessionRecord>(
-          `SELECT thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used
-           FROM "${settings.appSchema}".agent_sessions
-           WHERE company_id = $1
-           ORDER BY updated_at DESC`,
-          [request.currentUser.company_id],
-        )
-      : await query<SessionRecord>(
-          `SELECT thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used
-           FROM "${settings.appSchema}".agent_sessions
-           WHERE company_id = $1
-             AND created_by_user_id = $2
-           ORDER BY updated_at DESC`,
-          [request.currentUser.company_id, request.currentUser.id],
-        );
+    const sessions = await prisma.agentSession.findMany({
+      where: {
+        companyId: request.currentUser.company_id,
+        ...(request.currentUser.is_admin ? {} : { createdByUserId: request.currentUser.id }),
+      },
+      orderBy: { updatedAt: "desc" },
+    });
 
-    return sessions satisfies SessionRecord[];
+    return sessions.map(toSessionRecord) satisfies SessionRecord[];
   });
 
   app.post("/api/sessions", async (request, reply) => {
@@ -82,22 +92,19 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       system_prompt_used: agent.system_prompt,
     };
 
-    await query(
-      `INSERT INTO "${settings.appSchema}".agent_sessions
-       (thread_id, company_id, created_by_user_id, title, agent_id, user_prompt, system_prompt_used, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        session.thread_id,
-        request.currentUser.company_id ?? defaultCompanyId,
-        request.currentUser.id ?? defaultAdminUserId,
-        session.title,
-        session.agent_id,
-        session.user_prompt,
-        session.system_prompt_used,
-        session.created_at,
-        session.updated_at,
-      ],
-    );
+    await prisma.agentSession.create({
+      data: {
+        threadId: session.thread_id,
+        companyId: request.currentUser.company_id ?? defaultCompanyId,
+        createdByUserId: request.currentUser.id ?? defaultAdminUserId,
+        title: session.title,
+        agentId: session.agent_id,
+        userPrompt: session.user_prompt,
+        systemPromptUsed: session.system_prompt_used,
+        createdAt: session.created_at,
+        updatedAt: session.updated_at,
+      },
+    });
 
     reply.code(201);
     return session;
@@ -111,26 +118,29 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       return { detail: "Session access denied." };
     }
 
-    const [session] = await query<{ thread_id: string }>(
-      `SELECT thread_id
-       FROM "${settings.appSchema}".agent_sessions
-       WHERE thread_id = $1 AND company_id = $2`,
-      [thread_id, request.currentUser.company_id],
-    );
+    const session = await prisma.agentSession.findFirst({
+      where: {
+        threadId: thread_id,
+        companyId: request.currentUser.company_id,
+      },
+      select: { threadId: true },
+    });
     if (!session) {
       reply.code(404);
       return { detail: "Session not found." };
     }
 
-    const messages = await query<MessageRecord>(
-      `SELECT role, content, created_at
-       FROM "${settings.appSchema}".agent_messages
-       WHERE thread_id = $1
-       ORDER BY created_at ASC`,
-      [thread_id],
-    );
+    const messages = await prisma.agentMessage.findMany({
+      where: { threadId: thread_id },
+      orderBy: { createdAt: "asc" },
+    });
 
-    return messages satisfies MessageRecord[];
+    return messages.map((message) => ({
+      thread_id: message.threadId,
+      role: message.role as MessageRecord["role"],
+      content: message.content,
+      created_at: message.createdAt,
+    })) satisfies MessageRecord[];
   });
 
   app.patch("/api/sessions/:thread_id", async (request, reply) => {
@@ -142,20 +152,27 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       return { detail: "Session access denied." };
     }
 
-    const [updatedSession] = await query<SessionRecord>(
-      `UPDATE "${settings.appSchema}".agent_sessions
-       SET title = $3, updated_at = $4
-       WHERE thread_id = $1 AND company_id = $2
-       RETURNING thread_id, title, created_at, updated_at, agent_id, user_prompt, system_prompt_used`,
-      [thread_id, request.currentUser.company_id, payload.title.trim(), new Date()],
-    );
+    const updateResult = await prisma.agentSession.updateMany({
+      where: {
+        threadId: thread_id,
+        companyId: request.currentUser.company_id,
+      },
+      data: {
+        title: payload.title.trim(),
+        updatedAt: new Date(),
+      },
+    });
 
-    if (!updatedSession) {
+    if (updateResult.count === 0) {
       reply.code(404);
       return { detail: "Session not found." };
     }
 
-    return updatedSession satisfies SessionRecord;
+    const updatedSession = await prisma.agentSession.findUniqueOrThrow({
+      where: { threadId: thread_id },
+    });
+
+    return toSessionRecord(updatedSession) satisfies SessionRecord;
   });
 
   app.delete("/api/sessions/:thread_id", async (request, reply) => {
@@ -165,14 +182,14 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       return { detail: "Admin access required." };
     }
 
-    const [deletedSession] = await query<{ thread_id: string }>(
-      `DELETE FROM "${settings.appSchema}".agent_sessions
-       WHERE thread_id = $1 AND company_id = $2
-       RETURNING thread_id`,
-      [thread_id, request.currentUser.company_id],
-    );
+    const deletedSession = await prisma.agentSession.deleteMany({
+      where: {
+        threadId: thread_id,
+        companyId: request.currentUser.company_id,
+      },
+    });
 
-    if (!deletedSession) {
+    if (deletedSession.count === 0) {
       reply.code(404);
       return { detail: "Session not found." };
     }

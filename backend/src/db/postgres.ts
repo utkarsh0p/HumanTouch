@@ -674,7 +674,7 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
 
   await pool.query(
     `
-      INSERT INTO ${appSchema}.agents
+      INSERT INTO ${appSchema}.agents AS existing_agent
       (
         id,
         company_id,
@@ -705,21 +705,17 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
       )
       ON CONFLICT (id) DO UPDATE
       SET
-        company_id = EXCLUDED.company_id,
-        updated_by_user_id = EXCLUDED.updated_by_user_id,
-        name = EXCLUDED.name,
-        role = EXCLUDED.role,
-        goal = EXCLUDED.goal,
-        responsibilities = EXCLUDED.responsibilities,
-        permissions = EXCLUDED.permissions,
-        guardrails = EXCLUDED.guardrails,
-        work_style = EXCLUDED.work_style,
-        agent_info = EXCLUDED.agent_info,
-        system_prompt = EXCLUDED.system_prompt,
-        prompt_version = EXCLUDED.prompt_version,
-        system_prompt_generated_at = EXCLUDED.system_prompt_generated_at,
+        company_id = COALESCE(existing_agent.company_id, EXCLUDED.company_id),
+        created_by_user_id = COALESCE(existing_agent.created_by_user_id, EXCLUDED.created_by_user_id),
+        updated_by_user_id = COALESCE(existing_agent.updated_by_user_id, EXCLUDED.updated_by_user_id),
+        slug = COALESCE(NULLIF(existing_agent.slug, ''), EXCLUDED.slug),
+        prompt_version = COALESCE(existing_agent.prompt_version, EXCLUDED.prompt_version),
+        system_prompt_generated_at = COALESCE(
+          existing_agent.system_prompt_generated_at,
+          EXCLUDED.system_prompt_generated_at
+        ),
         is_system = TRUE,
-        updated_at = EXCLUDED.updated_at
+        updated_at = existing_agent.updated_at
     `,
     [
       defaultAdminAgentId,
@@ -762,6 +758,34 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   );
 }
 
+async function protectEditableDefaultAdminAgent(): Promise<void> {
+  const appSchema = quoteIdentifier(settings.appSchema);
+  const now = new Date();
+
+  await pool.query(
+    `
+      UPDATE ${appSchema}.agents
+      SET
+        company_id = COALESCE(company_id, $2),
+        created_by_user_id = COALESCE(created_by_user_id, $3),
+        updated_by_user_id = COALESCE(updated_by_user_id, $3),
+        is_system = TRUE
+      WHERE id = $1
+    `,
+    [defaultAdminAgentId, defaultCompanyId, defaultAdminUserId],
+  );
+
+  await pool.query(
+    `
+      INSERT INTO ${appSchema}.agent_role_assignments
+      (agent_id, company_id, role_key, created_at)
+      VALUES ($1, $2, 'admin', $3)
+      ON CONFLICT DO NOTHING
+    `,
+    [defaultAdminAgentId, defaultCompanyId, now],
+  );
+}
+
 async function addAgentArchiving(): Promise<void> {
   const appSchema = quoteIdentifier(settings.appSchema);
 
@@ -795,6 +819,10 @@ export async function connectToPostgres(): Promise<void> {
       {
         id: "004_agent_archiving",
         run: addAgentArchiving,
+      },
+      {
+        id: "005_protect_editable_default_admin_agent",
+        run: protectEditableDefaultAdminAgent,
       },
     ]);
   }

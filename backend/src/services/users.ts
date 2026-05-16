@@ -1,33 +1,46 @@
 import { randomUUID } from "node:crypto";
 
-import { settings } from "../config.js";
 import { defaultCompanyId } from "../constants/seed.js";
-import { query } from "../db/postgres.js";
+import { prisma } from "../db/prisma.js";
 import type { AuthenticatedUser, UserWithPasswordHash } from "../types/auth.js";
 
-const appSchema = `"${settings.appSchema.replaceAll('"', '""')}"`;
-const usersTable = `${appSchema}.users`;
+function toAuthenticatedUser(user: {
+  id: string;
+  companyId: string;
+  email: string;
+  fullName: string;
+  roleKey: string;
+  isAdmin: boolean;
+}): AuthenticatedUser {
+  return {
+    id: user.id,
+    company_id: user.companyId,
+    email: user.email,
+    full_name: user.fullName,
+    role_key: user.roleKey,
+    is_admin: user.isAdmin,
+  };
+}
 
 export async function getUserByEmail(email: string): Promise<AuthenticatedUser | null> {
-  const [user] = await query<AuthenticatedUser>(
-    `SELECT id, company_id, email, full_name, role_key, is_admin
-     FROM ${usersTable}
-     WHERE lower(email) = lower($1)`,
-    [email],
-  );
+  const user = await prisma.user.findFirst({
+    where: {
+      email: {
+        equals: email,
+        mode: "insensitive",
+      },
+    },
+  });
 
-  return user ?? null;
+  return user ? toAuthenticatedUser(user) : null;
 }
 
 export async function getUserById(userId: string): Promise<AuthenticatedUser | null> {
-  const [user] = await query<AuthenticatedUser>(
-    `SELECT id, company_id, email, full_name, role_key, is_admin
-     FROM ${usersTable}
-     WHERE id = $1`,
-    [userId],
-  );
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
 
-  return user ?? null;
+  return user ? toAuthenticatedUser(user) : null;
 }
 
 export async function getUsersByEmails(
@@ -42,26 +55,39 @@ export async function getUsersByEmails(
     return [];
   }
 
-  return await query<AuthenticatedUser>(
-    `SELECT id, company_id, email, full_name, role_key, is_admin
-     FROM ${usersTable}
-     WHERE company_id = $1
-       AND lower(email) = ANY($2::text[])`,
-    [companyId, normalizedEmails],
-  );
+  const users = await prisma.user.findMany({
+    where: {
+      companyId,
+      OR: normalizedEmails.map((email) => ({
+        email: {
+          equals: email,
+          mode: "insensitive" as const,
+        },
+      })),
+    },
+  });
+
+  return users.map(toAuthenticatedUser);
 }
 
 export async function getUserByEmailWithPasswordHash(
   email: string,
 ): Promise<UserWithPasswordHash | null> {
-  const [user] = await query<UserWithPasswordHash>(
-    `SELECT id, company_id, email, full_name, role_key, is_admin, password_hash
-     FROM ${usersTable}
-     WHERE lower(email) = lower($1)`,
-    [email],
-  );
+  const user = await prisma.user.findFirst({
+    where: {
+      email: {
+        equals: email,
+        mode: "insensitive",
+      },
+    },
+  });
 
-  return user ?? null;
+  return user
+    ? {
+        ...toAuthenticatedUser(user),
+        password_hash: user.passwordHash,
+      }
+    : null;
 }
 
 export type CreateLocalUserInput = {
@@ -71,17 +97,18 @@ export type CreateLocalUserInput = {
 };
 
 export async function createLocalUser(input: CreateLocalUserInput): Promise<AuthenticatedUser> {
-  const [user] = await query<AuthenticatedUser>(
-    `INSERT INTO ${usersTable}
-     (id, company_id, email, full_name, role_key, is_admin, auth_provider, password_hash, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, 'employee', FALSE, 'local', $5, NOW(), NOW())
-     RETURNING id, company_id, email, full_name, role_key, is_admin`,
-    [randomUUID(), defaultCompanyId, input.email, input.full_name, input.password_hash],
-  );
+  const user = await prisma.user.create({
+    data: {
+      id: randomUUID(),
+      companyId: defaultCompanyId,
+      email: input.email,
+      fullName: input.full_name,
+      roleKey: "employee",
+      isAdmin: false,
+      authProvider: "local",
+      passwordHash: input.password_hash,
+    },
+  });
 
-  if (!user) {
-    throw new Error("Failed to create user.");
-  }
-
-  return user;
+  return toAuthenticatedUser(user);
 }
