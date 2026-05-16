@@ -1,6 +1,6 @@
 # HumanTouch Schema
 
-Updated: 2026-05-08
+Updated: 2026-05-16
 
 ## Intent
 
@@ -16,6 +16,29 @@ HumanTouch now uses a product schema built around:
 - LangGraph checkpointer for runtime thread state
 
 This document is the canonical reference for future sessions.
+
+## Schema Ownership
+
+The current database uses separate PostgreSQL schemas for product data and runtime graph state:
+
+- `humantouch`
+  HumanTouch product tables. These are modeled in `backend/prisma/schema.prisma`.
+- `langgraph`
+  LangGraph checkpoint tables. These are created and maintained by LangGraph's `PostgresSaver`.
+- `public`
+  Default PostgreSQL schema. It is not the HumanTouch app-table target.
+
+Prisma owns the HumanTouch product table model and migration history:
+
+- Prisma schema file: `backend/prisma/schema.prisma`
+- Prisma migrations directory: `backend/prisma/migrations/`
+- Prisma migration history table: `humantouch._prisma_migrations`
+
+The older custom migration history table still exists:
+
+- `humantouch.schema_migrations`
+
+That table belongs to the compatibility/bootstrap path. New product-table schema changes should prefer Prisma migrations. LangGraph checkpoint tables should not be added to Prisma.
 
 ## Core Model
 
@@ -262,6 +285,13 @@ LangGraph checkpointer is used for:
 - graph thread state
 - resumable conversation execution
 
+Current LangGraph tables live in the `langgraph` schema:
+
+- `checkpoint_blobs`
+- `checkpoint_migrations`
+- `checkpoint_writes`
+- `checkpoints`
+
 App tables are used for:
 
 - product records
@@ -271,3 +301,5 @@ App tables are used for:
 - explicit message history
 
 The checkpointer is not the only source of truth for the product model.
+
+Prisma should not manage the LangGraph checkpoint tables. The product-readable session and message history remains in `humantouch.agent_sessions` and `humantouch.agent_messages`.

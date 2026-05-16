@@ -124,6 +124,7 @@ Keep the first UI simple:
 - frontend: Next.js + Tailwind CSS
 - backend: Node.js + TypeScript
 - backend framework: Fastify
+- ORM for HumanTouch product tables: Prisma
 - orchestration: LangGraph.js
 - model provider: Google Gemini via environment variable
 - persistence: PostgreSQL
@@ -134,6 +135,7 @@ Integration direction:
 - build the backend so it can run either as a standalone service or be mounted into a larger Node.js backend
 - keep agent tables logically isolated, ideally in a dedicated PostgreSQL schema
 - avoid creating a separate source of truth for users, employees, companies, or roles
+- keep LangGraph checkpoint tables outside Prisma ownership
 
 ## MVP Backend Direction
 
@@ -144,6 +146,7 @@ For the MVP, keep the backend as a single Node.js service.
 - do not introduce a split backend architecture
 - use Server-Sent Events (SSE) for response streaming
 - use PostgreSQL for chat sessions/history and LangGraph checkpoint persistence
+- use Prisma migrations for HumanTouch product table changes
 - prefer a service/module structure that can later be reused inside a larger backend
 - keep route contracts stable and simple
 - keep auth and authorization separated

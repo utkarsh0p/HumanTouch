@@ -7,7 +7,7 @@ The current backend direction now assumes a real company/user data model: compan
 ## Stack
 
 - `frontend/`: Next.js + Tailwind chat UI
-- `backend/`: Node.js + TypeScript + Fastify + LangGraph.js + Gemini + PostgreSQL
+- `backend/`: Node.js + TypeScript + Fastify + Prisma + LangGraph.js + Gemini + PostgreSQL
 
 ## Product Direction
 
@@ -84,24 +84,35 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 
 ## Migrations
 
-This repo now has a migration entrypoint:
+This repo has two migration paths during the Prisma transition.
+
+For HumanTouch product tables, use Prisma:
+
+```bash
+cd backend
+pnpm exec prisma migrate dev --name your_change_name
+```
+
+Prisma migrations:
+
+- use `backend/prisma/schema.prisma` as the app-table source of truth
+- write SQL migration files under `backend/prisma/migrations/`
+- record applied migration history in `humantouch._prisma_migrations`
+- manage HumanTouch product tables, not LangGraph checkpoint tables
+
+The legacy/bootstrap migration entrypoint still exists for compatibility:
 
 ```bash
 cd backend
 npm run migrate
 ```
 
-What "migration" means here:
+Current transition status:
 
-- a migration is a controlled database change
-- instead of manually changing tables in Postgres, the app applies versioned schema updates
-- this makes local, staging, and production databases more consistent
-
-Current status:
-
-- the backend still uses idempotent schema bootstrap logic internally
-- that bootstrap is now wrapped by a migration bookkeeping table: `humantouch.schema_migrations`
-- future schema changes should be added as new migration entries instead of expanding one giant startup function forever
+- existing idempotent bootstrap logic is still present so older local databases keep working
+- that bootstrap uses `humantouch.schema_migrations`
+- new app-table schema changes should prefer Prisma migrations
+- LangGraph checkpointer tables remain managed by LangGraph in `LANGGRAPH_DB_SCHEMA`
 
 ## Auth
 
@@ -131,32 +142,22 @@ Example:
 curl -H "x-dev-user-email: utkarshsingh@gmail.com" http://localhost:3001/api/agents
 ```
 
-## ORM
+## Database Access
 
-This repo does not use an ORM right now.
+HumanTouch product data now uses Prisma for normal CRUD.
 
-What an ORM is:
+Prisma manages the app tables in `APP_DB_SCHEMA`, which defaults to `humantouch`:
 
-- ORM stands for Object-Relational Mapper
-- it lets you work with database rows through code models instead of writing SQL directly
-- common examples are Prisma, Drizzle, TypeORM, and Sequelize
+- `companies`
+- `users`
+- `auth_sessions`
+- `agents`
+- `agent_role_assignments`
+- `agent_user_assignments`
+- `agent_sessions`
+- `agent_messages`
 
-Why this repo does not use one yet:
-
-- raw SQL is simpler for the current MVP
-- the schema is still changing quickly
-- the project wants tight control over PostgreSQL schema layout for future integration
-
-What we use instead:
-
-- `pg` for database access
-- explicit SQL queries
-- explicit schema bootstrap/migration logic
-
-If the project grows, the most likely ORM/query-builder worth considering later would be:
-
-- Drizzle, if you want typed SQL with low abstraction
-- Prisma, if you want a higher-level data model and generated client
+The backend still keeps `pg` for compatibility/bootstrap code and for LangGraph persistence. LangGraph checkpoint tables live in `LANGGRAPH_DB_SCHEMA`, which defaults to `langgraph`, and should not be managed through Prisma migrations.
 
 ## Current Non-Goals
 
