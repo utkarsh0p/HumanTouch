@@ -54,6 +54,32 @@ pnpm install
 pnpm dev
 ```
 
+## Backend Docker setup
+
+The backend has a Dockerfile for remote deployment. It still listens on port `3001`, the same as local `pnpm dev` or `npm run dev`.
+
+Build the backend image from the repo root:
+
+```bash
+docker build -t humantouch-backend ./backend
+```
+
+Run it with the root `.env` file:
+
+```bash
+docker run --env-file .env -p 3001:3001 humantouch-backend
+```
+
+For a remote host, make sure the root `.env` has a database URL the container can reach and an allowed frontend origin:
+
+```bash
+PORT=3001
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/humantouch
+ALLOWED_ORIGINS=http://YOUR_SERVER_IP:3000
+```
+
+The backend container initializes the HumanTouch schemas and seeded demo data on startup.
+
 ## Environment
 
 Expected root `.env` values:
