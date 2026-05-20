@@ -139,6 +139,7 @@ Recommended `agent_info` structure:
 - `permissions TEXT`
 - `guardrails TEXT`
 - `work_style TEXT`
+- `allowed_tool_ids TEXT[]`
 - `workspace JSON`
 
 Recommended `workspace` structure:
@@ -153,6 +154,8 @@ Notes:
 
 - keep runtime-critical prompt inputs in `agent_info` so `system_prompt` can always be regenerated
 - keep early agent workspace configuration in `agent_info.workspace` until runs, artifacts, and tool policies justify dedicated tables
+- keep v1 tool permissions in `agent_info.allowed_tool_ids`; move to dedicated tool tables only when admin-managed catalogs, audit trails, or per-company integration config require it
+- enforce tool permissions by binding only the selected agent's allowed backend tools at runtime, not by prompt instructions alone
 - if the future agentic workspace gains stateful execution or artifacts, model that separately from conversation history
 
 ### `agent_role_assignments`
@@ -228,13 +231,33 @@ Runtime prompt order:
 3. optional `agent_sessions.user_prompt`
 4. actual user message
 
+## Workflow Runtime State
+
+The backend builds an in-memory `WorkflowState` for every chat request before
+invoking LangGraph. This state is the runtime contract between Fastify/Prisma
+services and the graph.
+
+Current state contents:
+
+- authenticated user id, company id, role key, and admin flag
+- selected session id, selected agent id, stored `system_prompt_used`, and optional `user_prompt`
+- selected agent id, slug, structured `agent_info`, current `system_prompt`, and system flag
+- latest input message
+- product-readable user/assistant message history from `agent_messages`
+- runtime mode: `admin` or `employee`
+
+The main workflow routes by runtime mode into an admin or employee subgraph.
+Both subgraphs can reuse the same selected-agent execution node. The selected
+agent remains dynamic and comes from the session/database, not from hardcoded
+workflow files.
+
 ## Prompt Generation
 
 Agent creation/update should use a nested contract:
 
 - `name`
 - `agent_info`
-  `role`, `goal`, `responsibilities`, `permissions`, `guardrails`, `work_style`, `workspace`
+  `role`, `goal`, `responsibilities`, `permissions`, `guardrails`, `work_style`, `allowed_tool_ids`, `workspace`
 - `assignments`
   `role_keys`, `user_ids`
 
@@ -270,6 +293,7 @@ Admin:
 - can edit agents
 - can assign by role
 - can assign directly to users
+- can use any non-archived agent in the same company, including agents assigned to employees
 
 Normal user:
 

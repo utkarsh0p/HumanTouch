@@ -4,6 +4,10 @@ import type { Prisma } from "@prisma/client";
 import { defaultAdminUserId, defaultCompanyId } from "../constants/seed.js";
 import { prisma } from "../db/prisma.js";
 import { compileAgentSystemPrompt } from "../langgraph/agent-prompt-compiler.js";
+import {
+  recommendDefaultToolIds,
+  validateConfiguredToolIds,
+} from "../langgraph/tools/registry.js";
 import { getUsersByEmails } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type {
@@ -37,6 +41,8 @@ export function toAgentRecord(agent: AgentWithAssignments): AgentRecord {
     ...new Set(agent.userAssignments.map((assignment) => assignment.user.email)),
   ];
 
+  const agentInfo = normalizeStoredAgentInfo(agent.agentInfo, agent.name);
+
   return {
     id: agent.id,
     company_id: agent.companyId,
@@ -44,7 +50,7 @@ export function toAgentRecord(agent: AgentWithAssignments): AgentRecord {
     updated_by_user_id: agent.updatedByUserId,
     name: agent.name,
     slug: agent.slug,
-    agent_info: agent.agentInfo as AgentInfo,
+    agent_info: agentInfo,
     system_prompt: agent.systemPrompt,
     prompt_version: agent.promptVersion,
     system_prompt_generated_at: agent.systemPromptGeneratedAt,
@@ -87,6 +93,59 @@ function deriveRoleFromName(name: string): string {
   return `${name} assistant`;
 }
 
+function normalizeOptionalText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function normalizeStoredAgentInfo(value: Prisma.JsonValue, name: string): AgentInfo {
+  const stored = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const workspace =
+    "workspace" in stored && stored.workspace && typeof stored.workspace === "object" && !Array.isArray(stored.workspace)
+      ? stored.workspace
+      : {};
+  const baseInfo = {
+    role: normalizeOptionalText(stored.role, deriveRoleFromName(name)),
+    goal: normalizeOptionalText(stored.goal, fallbackWorkspaceObjective(name)),
+    responsibilities: normalizeOptionalText(
+      stored.responsibilities,
+      "Carry out the assigned operational responsibilities.",
+    ),
+    permissions: normalizeOptionalText(
+      stored.permissions,
+      "Only act within the permissions explicitly given to you.",
+    ),
+    guardrails: normalizeOptionalText(
+      stored.guardrails,
+      "Do not exceed your scope, and surface uncertainty clearly.",
+    ),
+    work_style: normalizeOptionalText(stored.work_style, "Be clear, concise, and practical."),
+  };
+  const storedToolIds =
+    "allowed_tool_ids" in stored && Array.isArray(stored.allowed_tool_ids)
+      ? normalizeStringList(stored.allowed_tool_ids.filter((toolId): toolId is string => typeof toolId === "string"))
+      : recommendDefaultToolIds(baseInfo);
+
+  return {
+    ...baseInfo,
+    allowed_tool_ids: storedToolIds,
+    workspace: {
+      mode: "mode" in workspace && workspace.mode === "agentic" ? "agentic" : "chat",
+      objective: normalizeOptionalText(
+        "objective" in workspace ? workspace.objective : undefined,
+        fallbackWorkspaceObjective(name),
+      ),
+      primary_deliverables: normalizeOptionalText(
+        "primary_deliverables" in workspace ? workspace.primary_deliverables : undefined,
+        "Produce clear, usable outputs inside the assigned workspace.",
+      ),
+      collaboration_notes: normalizeOptionalText(
+        "collaboration_notes" in workspace ? workspace.collaboration_notes : undefined,
+        "Support the assigned employee directly, keep context explicit, and surface blockers early.",
+      ),
+    },
+  };
+}
+
 async function buildUniqueSlug(name: string, excludeAgentId?: string): Promise<string> {
   const baseSlug = slugify(name) || "agent";
   const matches = await prisma.agent.findMany({
@@ -115,7 +174,7 @@ function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
   const allowedTasks = normalizeText(payload.allowed_tasks);
   const restrictions = normalizeText(payload.restrictions);
 
-  return {
+  const baseInfo = {
     role: deriveRoleFromName(name),
     goal: purpose,
     responsibilities: allowedTasks,
@@ -123,6 +182,15 @@ function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
     guardrails: restrictions,
     work_style:
       "Be clear, practical, concise, and supportive. Optimize for the assigned employee's workflow.",
+  };
+  const allowedToolIds =
+    payload.allowed_tool_ids === undefined
+      ? recommendDefaultToolIds(baseInfo)
+      : validateConfiguredToolIds(normalizeStringList(payload.allowed_tool_ids));
+
+  return {
+    ...baseInfo,
+    allowed_tool_ids: allowedToolIds,
     workspace: {
       mode: "chat",
       objective: purpose || fallbackWorkspaceObjective(name),

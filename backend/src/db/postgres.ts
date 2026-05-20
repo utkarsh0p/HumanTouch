@@ -7,6 +7,7 @@ import {
   defaultCompanyId,
 } from "../constants/seed.js";
 import { runMigrations } from "./migrations.js";
+import { recommendDefaultToolIds } from "../langgraph/tools/registry.js";
 import { buildAgentContext } from "../services/agent-context.js";
 import { hashPassword } from "../services/passwords.js";
 import type { AgentInfo } from "../types/agents.js";
@@ -510,13 +511,24 @@ async function backfillAgents(appSchema: string): Promise<void> {
       agent.agent_info && typeof agent.agent_info === "object" && "workspace" in agent.agent_info
         ? (agent.agent_info as { workspace?: unknown }).workspace
         : null;
-    const agentInfo: AgentInfo = {
+    const baseInfo = {
       role: agent.role,
       goal: agent.goal,
       responsibilities: agent.responsibilities,
       permissions: agent.permissions,
       guardrails: agent.guardrails,
       work_style: agent.work_style,
+    };
+    const existingToolIds =
+      agent.agent_info &&
+      typeof agent.agent_info === "object" &&
+      "allowed_tool_ids" in agent.agent_info &&
+      Array.isArray(agent.agent_info.allowed_tool_ids)
+        ? agent.agent_info.allowed_tool_ids.filter((toolId): toolId is string => typeof toolId === "string")
+        : recommendDefaultToolIds(baseInfo);
+    const agentInfo: AgentInfo = {
+      ...baseInfo,
+      allowed_tool_ids: existingToolIds,
       workspace: {
         mode:
           existingWorkspace &&
@@ -574,7 +586,36 @@ async function backfillAssignments(appSchema: string): Promise<void> {
     UPDATE ${appSchema}.agent_role_assignments
     SET
       company_id = COALESCE(company_id, '${defaultCompanyId}'),
-      role_key = COALESCE(NULLIF(role_key, ''), role_name)
+      role_key = COALESCE(NULLIF(role_key, ''), 'admin')
+  `);
+
+  const legacyRoleNameColumn = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = $1
+          AND table_name = 'agent_role_assignments'
+          AND column_name = 'role_name'
+      ) AS exists
+    `,
+    [settings.appSchema],
+  );
+
+  if (legacyRoleNameColumn.rows[0]?.exists) {
+    await pool.query(`
+      UPDATE ${appSchema}.agent_role_assignments
+      SET role_key = COALESCE(NULLIF(role_key, ''), role_name, 'admin')
+    `);
+  }
+
+  await pool.query(`
+    ALTER TABLE ${appSchema}.agent_role_assignments
+    ALTER COLUMN company_id SET NOT NULL
+  `);
+  await pool.query(`
+    ALTER TABLE ${appSchema}.agent_role_assignments
+    ALTER COLUMN role_key SET NOT NULL
   `);
 }
 
@@ -649,7 +690,7 @@ async function backfillMessages(appSchema: string): Promise<void> {
 
 async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   const now = new Date();
-  const agentInfo: AgentInfo = {
+  const baseInfo = {
     role: "Admin",
     goal: "Manage HumanTouch agent operations for the company, plan work, and oversee system use.",
     responsibilities:
@@ -660,6 +701,10 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
       "Do not claim to have permissions that are not explicitly available. Do not take sensitive external actions without approval. Stay inside product and operational scope.",
     work_style:
       "Be concise, practical, structured, and operationally focused. Surface assumptions and risks clearly.",
+  };
+  const agentInfo: AgentInfo = {
+    ...baseInfo,
+    allowed_tool_ids: recommendDefaultToolIds(baseInfo),
     workspace: {
       mode: "agentic" as const,
       objective:

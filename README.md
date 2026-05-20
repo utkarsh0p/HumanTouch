@@ -105,8 +105,43 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 - role-based and direct user assignment tables
 - multiple chat sessions
 - PostgreSQL-backed session metadata and message history
-- LangGraph.js execution in TypeScript
+- one main LangGraph.js workflow in TypeScript with admin and employee subgraphs
 - SSE streaming from backend to frontend
+
+## Workflow Runtime
+
+Chat execution now uses one backend workflow entrypoint.
+
+Request handling builds a `WorkflowState` from the authenticated user, selected
+session, selected agent, assignment/access result, per-session prompt, and
+message history. The main LangGraph workflow routes that state into either the
+admin subgraph or employee subgraph.
+
+Access is still enforced before graph execution:
+
+- admins can use any non-archived agent in their company
+- employees can use only agents assigned directly to them or to their role
+- no workflow branch may cross the request user's `company_id`
+
+The admin and employee workflows share the selected-agent runtime. That means an
+admin can open and use a Marketing, HR, Finance, or other company agent when a
+human employee is unavailable, while an employee remains limited to assigned
+agents.
+
+## Tool Runtime
+
+Tools are registered centrally in the backend and bound per selected agent at
+runtime. Agent definitions store allowed tool IDs in `agent_info.allowed_tool_ids`;
+the runtime resolves those IDs through the configured registry and passes only
+those tools to `llm.bindTools(...)`.
+
+The current real tool is `web_search`, backed by Tavily. It is available only
+when `TAVILY_API_KEY` is set. Agent creation derives a small default tool set
+from the agent purpose/tasks/restrictions, and the API can also accept explicit
+`allowed_tool_ids` for future UI or power-user control.
+
+Tool permissions are enforced by backend binding. Prompt text may describe
+available capabilities, but it is not the authority for whether a tool can run.
 
 ## Migrations
 

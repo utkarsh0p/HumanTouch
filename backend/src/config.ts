@@ -55,6 +55,7 @@ const envSchema = z
     GEMINI_API_KEY: z.string().optional(),
     GOOGLE_API_KEY: z.string().optional(),
     GEMINI_MODEL: z.string().min(1).default("gemini-2.5-pro"),
+    TAVILY_API_KEY: z.string().optional(),
     ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
   })
   .transform((env) => {
@@ -71,6 +72,7 @@ const envSchema = z
       langgraphSchema: env.LANGGRAPH_DB_SCHEMA,
       googleApiKey,
       geminiModel: env.GEMINI_MODEL,
+      tavilyApiKey: env.TAVILY_API_KEY,
       allowedOrigins: expandAllowedOrigins(
         includeCommonDevOrigins(
           env.ALLOWED_ORIGINS.split(",")

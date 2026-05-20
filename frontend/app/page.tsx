@@ -51,6 +51,7 @@ type Agent = {
     permissions: string;
     guardrails: string;
     work_style: string;
+    allowed_tool_ids: string[];
     workspace: {
       mode: "chat" | "agentic";
       objective: string;

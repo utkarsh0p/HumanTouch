@@ -8,7 +8,7 @@ It is a company webapp where an admin can create and manage AI agents for employ
 
 ## Product Goal
 
-The near-term goal is to ship a focused MVP for a single company admin.
+HumanTouch is the product: a focused company agent management app for an admin to create, assign, and manage AI agents for employees.
 
 The longer-term goal is to make this agent system integration-ready so it can attach to a larger existing business application and reuse that application's backend, users, roles, and PostgreSQL data model.
 
@@ -21,7 +21,7 @@ These markdown files are part of the working project context, but they should be
 - `README.md`
   Use for local setup, runtime expectations, dev auth notes, migration command notes, and high-level backend/frontend scope.
 - `PROJECT_BRIEF.md`
-  Use when the task is about product direction, MVP framing, or longer-term integration intent.
+  Use when the task is about product direction, current product framing, or longer-term integration intent.
 - `SCHEMA.md`
   Use when the task touches database design, auth/access modeling, assignments, sessions, or prompt storage.
 - `STYLES.md`
@@ -55,7 +55,7 @@ Normal employees should later:
 
 ## Core Product Model
 
-Version one should support:
+The product should support:
 
 - real `companies` and `users` tables
 - one default `Admin` agent
@@ -137,9 +137,9 @@ Integration direction:
 - avoid creating a separate source of truth for users, employees, companies, or roles
 - keep LangGraph checkpoint tables outside Prisma ownership
 
-## MVP Backend Direction
+## Backend Direction
 
-For the MVP, keep the backend as a single Node.js service.
+Keep the backend as a single Node.js service.
 
 - use Fastify for all backend APIs, not only LangGraph routes
 - keep LangGraph execution inside the same TypeScript backend
@@ -152,10 +152,13 @@ For the MVP, keep the backend as a single Node.js service.
 - keep auth and authorization separated
 - keep company scoping explicit in backend queries
 - use request user context consistently
+- build LangGraph runtime state in backend services before graph execution
+- keep the main workflow as the single graph entrypoint, with admin and employee behavior in separate subgraphs
+- register tools centrally and bind only each selected agent's allowed tools at runtime
 
 ## Current Non-Goals
 
-Do not add these in the initial MVP unless explicitly requested:
+Do not add these unless explicitly requested:
 
 - `shadcn/ui`
 - multi-provider model abstraction
@@ -175,6 +178,7 @@ Also avoid these unless explicitly requested:
 
 - no sensitive external action without approval
 - strict role-based access control
+- enforce tool access in backend code, not only through prompts
 - keep v1 small and extensible
 - design for future multi-agent expansion, but do not build all agents now
 - keep backend logic integration-friendly for a larger PostgreSQL-based app
@@ -185,7 +189,7 @@ Also avoid these unless explicitly requested:
 
 Unless changed, build around this assumption:
 
-- single-company MVP
+- single-company product
 - CEO is the admin
 - seeded admin user exists in the database
 - one default `Admin` agent exists

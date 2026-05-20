@@ -1,4 +1,8 @@
-import { connectToPostgres } from "../db/postgres.js";
+import { connectToPostgres, getPgPool } from "../db/postgres.js";
 
-await connectToPostgres();
-console.log("Migrations applied.");
+try {
+  await connectToPostgres();
+  console.log("Migrations applied.");
+} finally {
+  await getPgPool().end();
+}

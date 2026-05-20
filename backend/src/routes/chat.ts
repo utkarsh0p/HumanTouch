@@ -3,14 +3,11 @@ import { z } from "zod";
 
 import { settings } from "../config.js";
 import { prisma } from "../db/prisma.js";
-import {
-  createConversationInput,
-  extractText,
-  streamAgentResponseWithHistory,
-} from "../langgraph/admin-agent.js";
+import { buildWorkflowState } from "../langgraph/services/workflow-state.js";
+import type { WorkflowState } from "../langgraph/state.js";
+import { streamMainWorkflowResponse } from "../langgraph/workflow.js";
 import { generateSessionTitle } from "../langgraph/session-title.js";
 import { canUserAccessSession } from "../services/access.js";
-import { getAgentById } from "../services/agents.js";
 
 const chatStreamSchema = z.object({
   thread_id: z.string().min(1),
@@ -72,6 +69,19 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
+    let workflowState: WorkflowState;
+    try {
+      workflowState = await buildWorkflowState({
+        user: request.currentUser,
+        threadId: payload.thread_id,
+        message: payload.message,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Failed to prepare workflow.";
+      reply.code(detail === "Session not found." ? 404 : 403);
+      return { detail };
+    }
+
     reply.hijack();
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     reply.raw.writeHead(200, {
@@ -90,40 +100,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
     const assistantParts: string[] = [];
 
     try {
-      const agent = await getAgentById(session.agentId);
-      if (!agent) {
-        throw new Error("Session agent no longer exists.");
-      }
+      const workflow = await streamMainWorkflowResponse(workflowState);
 
-      const runtimePrompt = [session.systemPromptUsed];
-      if (session.userPrompt?.trim()) {
-        runtimePrompt.push("", "User style preferences:", session.userPrompt.trim());
-      }
-
-      const conversationMessages = await prisma.agentMessage.findMany({
-        where: {
-          threadId: payload.thread_id,
-          role: { in: ["user", "assistant"] },
-        },
-        orderBy: { createdAt: "asc" },
-        select: {
-          role: true,
-          content: true,
-        },
-      });
-
-      const stream = await streamAgentResponseWithHistory(
-        createConversationInput(
-          runtimePrompt.join("\n"),
-          conversationMessages.map((message) => ({
-            role: message.role as "user" | "assistant",
-            content: message.content,
-          })),
-        ),
-      );
-
-      for await (const chunk of stream) {
-        const text = extractText(chunk.content);
+      for await (const chunk of workflow.stream) {
+        const text = workflow.extractText(chunk.content);
         if (!text) {
           continue;
         }

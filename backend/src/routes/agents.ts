@@ -9,6 +9,7 @@ const createAgentSchema = z.object({
   purpose: z.string().trim().min(1),
   allowed_tasks: z.string().trim().min(1),
   restrictions: z.string().trim().min(1),
+  allowed_tool_ids: z.array(z.string().trim().min(1)).optional(),
   assigned_role_keys: z.array(z.string().trim().min(1)).default([]),
   assigned_user_emails: z.array(z.string().trim().email()).default([]),
 });
@@ -17,6 +18,7 @@ const updateAgentSchema = z.object({
   purpose: z.string().trim().min(1),
   allowed_tasks: z.string().trim().min(1),
   restrictions: z.string().trim().min(1),
+  allowed_tool_ids: z.array(z.string().trim().min(1)).optional(),
   assigned_role_keys: z.array(z.string().trim().min(1)).optional(),
   assigned_user_emails: z.array(z.string().trim().email()).optional(),
 });
@@ -32,9 +34,16 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/agents", async (request, reply) => {
     ensureAdmin(request.currentUser);
     const payload = createAgentSchema.parse(request.body);
-    const agent = await createAgent(payload, request.currentUser);
-    reply.code(201);
-    return agent;
+
+    try {
+      const agent = await createAgent(payload, request.currentUser);
+      reply.code(201);
+      return agent;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Failed to create agent.";
+      reply.code(400);
+      return { detail };
+    }
   });
 
   app.patch("/api/agents/:agentId", async (request, reply) => {
