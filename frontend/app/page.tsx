@@ -94,6 +94,16 @@ type AuthProvidersResponse = {
   };
 };
 
+type ToolCatalogEntry = {
+  id: string;
+  label: string;
+  category: "research" | "company_data" | "ticketing" | "email" | "admin";
+  risk: "low" | "medium" | "high";
+  requiresConfig: boolean;
+  configured: boolean;
+  promptDescription: string;
+};
+
 function resolveApiBaseUrl(): string {
   const fallback = "http://localhost:3001";
   if (typeof window === "undefined") {
@@ -289,6 +299,8 @@ export default function HomePage() {
   const [agentAllowedTasks, setAgentAllowedTasks] = useState("");
   const [agentRestrictions, setAgentRestrictions] = useState("");
   const [employeeEmailDraft, setEmployeeEmailDraft] = useState("");
+  const [toolCatalog, setToolCatalog] = useState<ToolCatalogEntry[]>([]);
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isAgentListOpen, setIsAgentListOpen] = useState(false);
@@ -481,6 +493,7 @@ export default function HomePage() {
     setAgentAllowedTasks("");
     setAgentRestrictions("");
     setEmployeeEmailDraft("");
+    setSelectedToolIds([]);
   }
 
   function openCreateAgentForm() {
@@ -497,10 +510,19 @@ export default function HomePage() {
     setAgentAllowedTasks(agent.agent_info.responsibilities ?? "");
     setAgentRestrictions(agent.agent_info.guardrails ?? "");
     setEmployeeEmailDraft(agent.assigned_user_emails.join(", "));
+    setSelectedToolIds(agent.agent_info.allowed_tool_ids ?? []);
     setEditingAgentId(agent.id);
     setAgentFormMode("edit");
     setOpenAgentMenuId(null);
     setIsAgentFormOpen(true);
+  }
+
+  function toggleSelectedTool(toolId: string) {
+    setSelectedToolIds((current) =>
+      current.includes(toolId)
+        ? current.filter((currentToolId) => currentToolId !== toolId)
+        : [...current, toolId],
+    );
   }
 
   function startRenamingSession(session: Session) {
@@ -596,7 +618,26 @@ export default function HomePage() {
 
   async function loadWorkspace() {
     setError(null);
-    await Promise.all([loadAgents(), loadSessions()]);
+    await Promise.all([
+      loadAgents(),
+      loadSessions(),
+      currentUser?.is_admin ? loadToolCatalog() : Promise.resolve(),
+    ]);
+  }
+
+  async function loadToolCatalog() {
+    try {
+      const response = await apiFetch("/api/tools");
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Failed to load tools."));
+      }
+
+      const data = (await response.json()) as ToolCatalogEntry[];
+      setToolCatalog(data);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load tools.");
+    }
   }
 
   async function loadAgents() {
@@ -1114,6 +1155,7 @@ export default function HomePage() {
           purpose: agentPurpose,
           allowed_tasks: agentAllowedTasks,
           restrictions: agentRestrictions,
+          allowed_tool_ids: selectedToolIds,
           ...(!isEditingSystemAgent
             ? {
                 assigned_user_emails: employeeEmailDraft
@@ -1261,6 +1303,22 @@ export default function HomePage() {
   });
   const hasConversation = messages.length > 0;
   const sidebarToggleTitle = isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
+  const toolGroups = toolCatalog.reduce<Record<string, ToolCatalogEntry[]>>((groups, toolItem) => {
+    groups[toolItem.category] = [...(groups[toolItem.category] ?? []), toolItem];
+    return groups;
+  }, {});
+  const toolCategoryLabels: Record<ToolCatalogEntry["category"], string> = {
+    research: "Research",
+    company_data: "Company data",
+    ticketing: "Ticketing",
+    email: "Email",
+    admin: "Admin",
+  };
+  const toolRiskStyles: Record<ToolCatalogEntry["risk"], string> = {
+    low: "border-[#536b55] text-[#a8c8a6]",
+    medium: "border-[#7a6a45] text-[#d2bd7a]",
+    high: "border-[#83534a] text-[#e29c8e]",
+  };
 
   function renderComposer(className?: string) {
     return (
@@ -1503,6 +1561,68 @@ export default function HomePage() {
                       value={employeeEmailDraft}
                     />
                   ) : null}
+                  <div className="rounded-2xl border border-white/8 bg-[#1e1b18] p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm text-[#f2ede3]">Tool access</p>
+                      <span className="text-[11px] text-[#8f8778]">
+                        {selectedToolIds.length} selected
+                      </span>
+                    </div>
+                    {toolCatalog.length === 0 ? (
+                      <p className="mt-3 text-xs leading-5 text-[#8f8778]">
+                        No tools are available from the backend catalog.
+                      </p>
+                    ) : (
+                      <div className="mt-3 space-y-3">
+                        {Object.entries(toolGroups).map(([category, tools]) => (
+                          <div key={category}>
+                            <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-[#8f8778]">
+                              {toolCategoryLabels[category as ToolCatalogEntry["category"]] ?? category}
+                            </p>
+                            <div className="space-y-2">
+                              {tools.map((toolItem) => {
+                                const isSelected = selectedToolIds.includes(toolItem.id);
+                                return (
+                                  <label
+                                    key={toolItem.id}
+                                    className={`flex gap-3 rounded-xl border px-3 py-2.5 text-sm transition ${
+                                      toolItem.configured
+                                        ? "cursor-pointer border-white/8 bg-[#24211d] text-[#ddd5c8] hover:bg-[#2b2824]"
+                                        : "cursor-not-allowed border-white/5 bg-[#1b1916] text-[#736d62]"
+                                    }`}
+                                  >
+                                    <input
+                                      checked={isSelected}
+                                      className="mt-1 h-4 w-4 accent-[#efe7d8]"
+                                      disabled={!toolItem.configured}
+                                      onChange={() => toggleSelectedTool(toolItem.id)}
+                                      type="checkbox"
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="flex flex-wrap items-center gap-2">
+                                        <span className="font-medium">{toolItem.label}</span>
+                                        <span
+                                          className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${toolRiskStyles[toolItem.risk]}`}
+                                        >
+                                          {toolItem.risk}
+                                        </span>
+                                        {!toolItem.configured ? (
+                                          <span className="text-[11px] text-[#d97757]">Not configured</span>
+                                        ) : null}
+                                      </span>
+                                      <span className="mt-1 block text-xs leading-5 text-[#9f9788]">
+                                        {toolItem.promptDescription}
+                                      </span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-5 flex shrink-0 items-center justify-between gap-3">
                   <button

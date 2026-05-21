@@ -183,7 +183,7 @@ Notes:
 
 - keep runtime-critical prompt inputs in `agent_info` so `system_prompt` can always be regenerated
 - keep early agent workspace configuration in `agent_info.workspace` until runs, artifacts, and tool policies justify dedicated tables
-- keep v1 tool permissions in `agent_info.allowed_tool_ids`; they may be LLM-recommended on agent create/update, but backend validation decides what is stored
+- keep v1 tool permissions in `agent_info.allowed_tool_ids`; admins select tools explicitly from the backend catalog, and backend validation decides what is stored
 - move to dedicated tool tables only when admin-managed catalogs, audit trails, or per-company integration config require it
 - enforce tool permissions by binding only the selected agent's allowed backend tools at runtime, not by prompt instructions alone
 - if the future agentic workspace gains stateful execution or artifacts, model that separately from conversation history
@@ -298,8 +298,8 @@ Current implementation:
 - prompt generation happens on create
 - the generator attempts an LLM-based compile step
 - if that fails, it falls back to a deterministic template prompt
-- tool recommendation also happens on create/update when explicit `allowed_tool_ids` are not supplied
-- tool recommendation returns only tool IDs; backend validation maps those IDs to stored permissions and runtime tool implementations
+- tool assignment is explicit on create/update; missing `allowed_tool_ids` means no tools
+- backend validation maps selected tool IDs to stored permissions and runtime tool implementations
 
 ## Current Seed Data
 

@@ -4,11 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { defaultAdminUserId, defaultCompanyId } from "../constants/seed.js";
 import { prisma } from "../db/prisma.js";
 import { compileAgentSystemPrompt } from "../langgraph/agent-prompt-compiler.js";
-import { recommendToolIdsForAgent } from "../langgraph/tools/recommender.js";
-import {
-  recommendDefaultToolIds,
-  validateConfiguredToolIds,
-} from "../langgraph/tools/registry.js";
+import { validateConfiguredToolIds } from "../langgraph/tools/registry.js";
 import { getUsersByEmails } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type {
@@ -124,7 +120,7 @@ function normalizeStoredAgentInfo(value: Prisma.JsonValue, name: string): AgentI
   const storedToolIds =
     "allowed_tool_ids" in stored && Array.isArray(stored.allowed_tool_ids)
       ? normalizeStringList(stored.allowed_tool_ids.filter((toolId): toolId is string => typeof toolId === "string"))
-      : recommendDefaultToolIds(baseInfo);
+      : [];
 
   return {
     ...baseInfo,
@@ -169,7 +165,7 @@ async function buildUniqueSlug(name: string, excludeAgentId?: string): Promise<s
   return `${baseSlug}-${suffix}`;
 }
 
-async function normalizeAgentInfo(payload: AgentCreatePayload): Promise<AgentInfo> {
+function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
   const name = normalizeText(payload.name);
   const purpose = normalizeText(payload.purpose);
   const allowedTasks = normalizeText(payload.allowed_tasks);
@@ -186,7 +182,7 @@ async function normalizeAgentInfo(payload: AgentCreatePayload): Promise<AgentInf
   };
   const allowedToolIds =
     payload.allowed_tool_ids === undefined
-      ? await recommendToolIdsForAgent({ name, agentInfo: baseInfo })
+      ? []
       : validateConfiguredToolIds(normalizeStringList(payload.allowed_tool_ids));
 
   return {
@@ -248,7 +244,7 @@ export async function createAgent(
   const id = randomUUID();
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name);
-  const agentInfo = await normalizeAgentInfo(payload);
+  const agentInfo = normalizeAgentInfo(payload);
   const companyId = actor?.company_id ?? defaultCompanyId;
   const assignedRoles = resolveRoleAssignments(payload.assigned_role_keys ?? []);
   const resolvedUserIds = await resolveUserAssignments(
@@ -325,7 +321,7 @@ export async function updateAgent(
   const companyId = actor.company_id;
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name, agentId);
-  const agentInfo = await normalizeAgentInfo(payload);
+  const agentInfo = normalizeAgentInfo(payload);
   const systemPrompt = await compileAgentSystemPrompt(name, agentInfo);
   const nextAssignedRoles =
     payload.assigned_role_keys === undefined

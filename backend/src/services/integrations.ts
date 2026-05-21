@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { prisma } from "../db/prisma.js";
 import type { AuthenticatedUser } from "../types/auth.js";
-import { encryptToken } from "./token-encryption.js";
+import { decryptToken, encryptToken } from "./token-encryption.js";
 
 const GOOGLE_PROVIDER = "google";
 
@@ -34,6 +34,12 @@ export type IntegrationAccountSummary = {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type GoogleConnectedAccountCredentials = {
+  accessToken: string;
+  scopes: string[];
+  providerEmail: string;
 };
 
 function toSummary(account: {
@@ -186,6 +192,46 @@ export async function saveGoogleConnectedAccount(input: {
   });
 
   return toSummary(account);
+}
+
+export async function getGoogleConnectedAccountCredentials(input: {
+  userId: string;
+  companyId: string;
+  requiredScopes: string[];
+}): Promise<GoogleConnectedAccountCredentials> {
+  const account = await prisma.connectedAccount.findFirst({
+    where: {
+      companyId: input.companyId,
+      userId: input.userId,
+      provider: GOOGLE_PROVIDER,
+      status: "connected",
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (!account?.encryptedAccessToken) {
+    throw new Error("Google account is not connected. Connect Google OAuth before using Gmail tools.");
+  }
+
+  const missingScopes = input.requiredScopes.filter((scope) => !account.scopes.includes(scope));
+  if (missingScopes.length > 0) {
+    throw new Error(`Google account is missing required Gmail scope(s): ${missingScopes.join(", ")}.`);
+  }
+
+  if (account.expiresAt && account.expiresAt.getTime() <= Date.now()) {
+    throw new Error("Google access token is expired. Reconnect Google OAuth before using Gmail tools.");
+  }
+
+  const accessToken = decryptToken(account.encryptedAccessToken);
+  if (!accessToken) {
+    throw new Error("Google access token is unavailable. Reconnect Google OAuth before using Gmail tools.");
+  }
+
+  return {
+    accessToken,
+    scopes: account.scopes,
+    providerEmail: account.providerEmail,
+  };
 }
 
 export async function disconnectGoogleAccount(user: AuthenticatedUser): Promise<void> {

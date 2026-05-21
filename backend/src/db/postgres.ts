@@ -7,7 +7,6 @@ import {
   defaultCompanyId,
 } from "../constants/seed.js";
 import { runMigrations } from "./migrations.js";
-import { recommendDefaultToolIds } from "../langgraph/tools/registry.js";
 import { buildAgentContext } from "../services/agent-context.js";
 import { hashPassword } from "../services/passwords.js";
 import type { AgentInfo } from "../types/agents.js";
@@ -562,7 +561,7 @@ async function backfillAgents(appSchema: string): Promise<void> {
       "allowed_tool_ids" in agent.agent_info &&
       Array.isArray(agent.agent_info.allowed_tool_ids)
         ? agent.agent_info.allowed_tool_ids.filter((toolId): toolId is string => typeof toolId === "string")
-        : recommendDefaultToolIds(baseInfo);
+        : [];
     const agentInfo: AgentInfo = {
       ...baseInfo,
       allowed_tool_ids: existingToolIds,
@@ -741,7 +740,7 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   };
   const agentInfo: AgentInfo = {
     ...baseInfo,
-    allowed_tool_ids: recommendDefaultToolIds(baseInfo),
+    allowed_tool_ids: [],
     workspace: {
       mode: "agentic" as const,
       objective:

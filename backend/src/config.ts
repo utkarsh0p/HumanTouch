@@ -106,6 +106,7 @@ const envSchema = z
             "email",
             "profile",
             "https://www.googleapis.com/auth/gmail.compose",
+            "https://www.googleapis.com/auth/gmail.readonly",
           ],
       },
       tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,

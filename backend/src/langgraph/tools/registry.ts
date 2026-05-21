@@ -1,12 +1,24 @@
 import type { StructuredToolInterface } from "@langchain/core/tools";
 
 import { settings } from "../../config.js";
-import type { AgentInfo } from "../../types/agents.js";
+import type { WorkflowState } from "../state.js";
+import {
+  createGmailCreateDraftTool,
+  createGmailReadMessageTool,
+  createGmailSearchMessagesTool,
+  createGmailSendDraftTool,
+} from "./gmail.js";
 import { webSearchTool } from "./web-search.js";
 
-export type ToolId = "web_search";
+export type ToolId =
+  | "web_search"
+  | "gmail_create_draft"
+  | "gmail_send_draft"
+  | "gmail_search_messages"
+  | "gmail_read_message";
 export type ToolCategory = "research" | "company_data" | "ticketing" | "email" | "admin";
 export type ToolRisk = "low" | "medium" | "high";
+export type ToolRuntimeContext = Pick<WorkflowState, "user" | "session" | "agent" | "runtime">;
 
 export type ToolDefinition = {
   id: ToolId;
@@ -15,13 +27,16 @@ export type ToolDefinition = {
   risk: ToolRisk;
   requiresConfig: boolean;
   promptDescription: string;
-  tool: StructuredToolInterface;
+  createTool: (context: ToolRuntimeContext) => StructuredToolInterface;
 };
 
 export type ToolCatalogEntry = Pick<
   ToolDefinition,
   "id" | "label" | "category" | "risk" | "promptDescription"
->;
+> & {
+  requiresConfig: boolean;
+  configured: boolean;
+};
 
 const toolRegistry = [
   {
@@ -31,30 +46,81 @@ const toolRegistry = [
     risk: "low",
     requiresConfig: true,
     promptDescription: "Search public web results for current external information.",
-    tool: webSearchTool,
+    createTool: () => webSearchTool,
+  },
+  {
+    id: "gmail_create_draft",
+    label: "Gmail create draft",
+    category: "email",
+    risk: "medium",
+    requiresConfig: true,
+    promptDescription: "Create Gmail drafts for the current user's connected Google account.",
+    createTool: createGmailCreateDraftTool,
+  },
+  {
+    id: "gmail_send_draft",
+    label: "Gmail send draft",
+    category: "email",
+    risk: "high",
+    requiresConfig: true,
+    promptDescription: "Send an existing Gmail draft by draft ID for the current user's connected Google account.",
+    createTool: createGmailSendDraftTool,
+  },
+  {
+    id: "gmail_search_messages",
+    label: "Gmail search messages",
+    category: "email",
+    risk: "medium",
+    requiresConfig: true,
+    promptDescription: "Search Gmail messages for the current user's connected Google account.",
+    createTool: createGmailSearchMessagesTool,
+  },
+  {
+    id: "gmail_read_message",
+    label: "Gmail read message",
+    category: "email",
+    risk: "medium",
+    requiresConfig: true,
+    promptDescription: "Read Gmail message metadata and snippets for the current user's connected Google account.",
+    createTool: createGmailReadMessageTool,
   },
 ] satisfies ToolDefinition[];
 
-export function getConfiguredToolCatalog(): ToolDefinition[] {
-  return toolRegistry.filter((definition) => {
-    if (definition.id === "web_search") {
-      return Boolean(settings.tavilyApiKey);
-    }
+function isToolConfigured(definition: ToolDefinition): boolean {
+  if (definition.id === "web_search") {
+    return Boolean(settings.tavilyApiKey);
+  }
 
-    return !definition.requiresConfig;
-  });
+  if (definition.category === "email") {
+    return Boolean(
+      settings.googleOAuth.clientId &&
+        settings.googleOAuth.clientSecret &&
+        settings.tokenEncryptionKey,
+    );
+  }
+
+  return true;
 }
 
-export function getPromptSafeToolCatalog(): ToolCatalogEntry[] {
-  return getConfiguredToolCatalog().map(
-    ({ id, label, category, risk, promptDescription }) => ({
-      id,
-      label,
-      category,
-      risk,
-      promptDescription,
-    }),
+export function getToolCatalog(): ToolCatalogEntry[] {
+  return toolRegistry.map(
+    (definition) => {
+      const { id, label, category, risk, requiresConfig, promptDescription } = definition;
+      return {
+        id,
+        label,
+        category,
+        risk,
+        requiresConfig,
+        configured: isToolConfigured(definition),
+        promptDescription,
+      };
+    },
   );
+}
+
+export function getConfiguredToolCatalog(): ToolDefinition[] {
+  return toolRegistry.filter(isToolConfigured);
 }
 
 export function getConfiguredToolIds(): ToolId[] {
@@ -72,57 +138,17 @@ export function validateConfiguredToolIds(toolIds: string[]): ToolId[] {
   return [...new Set(toolIds)] as ToolId[];
 }
 
-export function resolveToolsForAgent(toolIds: string[]): StructuredToolInterface[] {
+export function resolveToolsForAgent(
+  toolIds: string[],
+  context: ToolRuntimeContext,
+): StructuredToolInterface[] {
   const allowedIds = new Set(toolIds);
 
   return getConfiguredToolCatalog()
     .filter((definition) => allowedIds.has(definition.id))
-    .map((definition) => definition.tool);
+    .map((definition) => definition.createTool(context));
 }
 
 export function hasConfiguredTool(toolIds: string[], toolId: ToolId): boolean {
   return getConfiguredToolIds().includes(toolId) && toolIds.includes(toolId);
-}
-
-export function recommendDefaultToolIds(
-  agentInfo: Pick<AgentInfo, "goal" | "responsibilities" | "guardrails">,
-): ToolId[] {
-  if (!settings.tavilyApiKey) {
-    return [];
-  }
-
-  const restrictionText = agentInfo.guardrails.toLowerCase();
-  const blocksWebAccess = [
-    "no internet",
-    "no external research",
-    "no web",
-    "do not search",
-    "don't search",
-    "without internet",
-    "avoid internet",
-    "avoid web",
-  ].some((phrase) => restrictionText.includes(phrase));
-
-  if (blocksWebAccess) {
-    return [];
-  }
-
-  const workText = `${agentInfo.goal}\n${agentInfo.responsibilities}`.toLowerCase();
-  const needsResearch = [
-    "research",
-    "web",
-    "internet",
-    "latest",
-    "current",
-    "recent",
-    "news",
-    "market",
-    "competitor",
-    "external",
-    "source",
-    "sources",
-    "documentation",
-  ].some((phrase) => workText.includes(phrase));
-
-  return needsResearch ? ["web_search"] : [];
 }

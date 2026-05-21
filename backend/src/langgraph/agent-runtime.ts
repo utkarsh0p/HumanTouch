@@ -81,6 +81,32 @@ export function buildRuntimePrompt(state: WorkflowState): string {
     );
   }
 
+  if (hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "gmail_create_draft")) {
+    promptParts.push(
+      "",
+      "Gmail access:",
+      "Use gmail_create_draft to prepare emails for the current user's connected Gmail account.",
+      "Do not claim an email was sent after creating a draft. Return the draft ID and a concise recipient/subject preview.",
+      "When gmail_create_draft returns a draftId, always include the exact draftId in your assistant response.",
+    );
+  }
+
+  if (hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "gmail_send_draft")) {
+    promptParts.push(
+      "Use gmail_send_draft only with an existing draft ID. Do not attempt to send raw email content directly.",
+      "If the user says to send it, send this draft, or send the drafted email, use the most recent draftId visible in the conversation or tool result instead of asking again.",
+    );
+  }
+
+  if (
+    hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "gmail_search_messages") ||
+    hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "gmail_read_message")
+  ) {
+    promptParts.push(
+      "Use Gmail read/search tools only for messages relevant to the user's request. Prefer searching first, then reading a selected message ID.",
+    );
+  }
+
   if (state.session.userPrompt?.trim()) {
     promptParts.push("", "User style preferences:", state.session.userPrompt.trim());
   }
@@ -100,7 +126,7 @@ export function createConversationInput(state: WorkflowState): BaseMessage[] {
 }
 
 export async function invokeSelectedAgent(state: WorkflowState): Promise<string> {
-  const tools = resolveToolsForAgent(state.agent.agentInfo.allowed_tool_ids);
+  const tools = resolveToolsForAgent(state.agent.agentInfo.allowed_tool_ids, state);
 
   if (tools.length > 0) {
     const toolCallingWorkflow = createToolCallingWorkflow(tools);
@@ -121,7 +147,7 @@ export async function invokeSelectedAgent(state: WorkflowState): Promise<string>
 }
 
 export async function streamSelectedAgentResponse(state: WorkflowState) {
-  const tools = resolveToolsForAgent(state.agent.agentInfo.allowed_tool_ids);
+  const tools = resolveToolsForAgent(state.agent.agentInfo.allowed_tool_ids, state);
 
   if (tools.length > 0) {
     const toolCallingWorkflow = createToolCallingWorkflow(tools);

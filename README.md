@@ -98,7 +98,7 @@ FRONTEND_BASE_URL=http://localhost:3000
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
-GOOGLE_OAUTH_SCOPES=openid,email,profile,https://www.googleapis.com/auth/gmail.compose
+GOOGLE_OAUTH_SCOPES=openid,email,profile,https://www.googleapis.com/auth/gmail.compose,https://www.googleapis.com/auth/gmail.readonly
 TOKEN_ENCRYPTION_KEY=
 ```
 
@@ -141,12 +141,13 @@ runtime. Agent definitions store allowed tool IDs in `agent_info.allowed_tool_id
 the runtime resolves those IDs through the configured registry and passes only
 those tools to `llm.bindTools(...)`.
 
-The current real tool is `web_search`, backed by Tavily. It is available only
-when `TAVILY_API_KEY` is set. Agent creation asks Gemini to recommend tool IDs
-from a prompt-safe catalog using the agent purpose/tasks/restrictions. If the
-recommendation call fails or returns invalid JSON, the backend falls back to a
-small deterministic recommender. The API can also accept explicit
-`allowed_tool_ids` for future UI or power-user control.
+The current real tools are `web_search`, backed by Tavily, and Gmail tools
+backed by the current user's connected Google OAuth account. `web_search` is
+available only when `TAVILY_API_KEY` is set. Gmail tools are available when
+Google OAuth and `TOKEN_ENCRYPTION_KEY` are configured, and the connected account
+has the required Gmail scopes. Admins assign tools explicitly from the backend
+tool catalog, and agent create/update APIs persist only backend-validated
+`allowed_tool_ids`.
 
 Tool permissions are enforced by backend binding. Prompt text may describe
 available capabilities, but it is not the authority for whether a tool can run.
@@ -221,6 +222,7 @@ tokens for future tools. The current routes are:
 - `GET /api/auth/google/callback`
 - `GET /api/integrations`
 - `POST /api/integrations/google/disconnect`
+- `GET /api/tools`
 
 The backend stores Google access and refresh tokens encrypted in
 `humantouch.connected_accounts`. The frontend only receives connection status
