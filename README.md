@@ -94,6 +94,12 @@ GEMINI_MODEL=gemini-2.5-pro
 PORT=3001
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+FRONTEND_BASE_URL=http://localhost:3000
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
+GOOGLE_OAUTH_SCOPES=openid,email,profile,https://www.googleapis.com/auth/gmail.compose
+TOKEN_ENCRYPTION_KEY=
 ```
 
 ## Current Backend Scope
@@ -136,8 +142,10 @@ the runtime resolves those IDs through the configured registry and passes only
 those tools to `llm.bindTools(...)`.
 
 The current real tool is `web_search`, backed by Tavily. It is available only
-when `TAVILY_API_KEY` is set. Agent creation derives a small default tool set
-from the agent purpose/tasks/restrictions, and the API can also accept explicit
+when `TAVILY_API_KEY` is set. Agent creation asks Gemini to recommend tool IDs
+from a prompt-safe catalog using the agent purpose/tasks/restrictions. If the
+recommendation call fails or returns invalid JSON, the backend falls back to a
+small deterministic recommender. The API can also accept explicit
 `allowed_tool_ids` for future UI or power-user control.
 
 Tool permissions are enforced by backend binding. Prompt text may describe
@@ -203,6 +211,21 @@ Example:
 curl -H "x-dev-user-email: utkarshsingh@gmail.com" http://localhost:3001/api/agents
 ```
 
+## Google OAuth Login and Integrations
+
+Google OAuth is the primary login/signup path and also stores connected-account
+tokens for future tools. The current routes are:
+
+- `GET /api/auth/providers`
+- `GET /api/auth/google/start`
+- `GET /api/auth/google/callback`
+- `GET /api/integrations`
+- `POST /api/integrations/google/disconnect`
+
+The backend stores Google access and refresh tokens encrypted in
+`humantouch.connected_accounts`. The frontend only receives connection status
+and provider email, never raw Google tokens.
+
 ## Database Access
 
 HumanTouch product data now uses Prisma for normal CRUD.
@@ -212,6 +235,7 @@ Prisma manages the app tables in `APP_DB_SCHEMA`, which defaults to `humantouch`
 - `companies`
 - `users`
 - `auth_sessions`
+- `connected_accounts`
 - `agents`
 - `agent_role_assignments`
 - `agent_user_assignments`

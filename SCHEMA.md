@@ -95,6 +95,35 @@ Notes:
 - the database stores a SHA-256 hash of that token, not the raw token
 - logout deletes the matching row so sessions are revocable server-side
 
+### `connected_accounts`
+
+Stores third-party OAuth account connections for future backend-owned tools.
+
+Columns:
+
+- `id UUID PRIMARY KEY`
+- `company_id UUID NOT NULL REFERENCES companies(id)`
+- `user_id UUID NOT NULL REFERENCES users(id)`
+- `provider TEXT NOT NULL`
+- `provider_account_id TEXT NOT NULL`
+- `provider_email TEXT NOT NULL`
+- `encrypted_access_token TEXT NULL`
+- `encrypted_refresh_token TEXT NULL`
+- `scopes TEXT[] NOT NULL`
+- `expires_at TIMESTAMPTZ NULL`
+- `status TEXT NOT NULL`
+- `created_at TIMESTAMPTZ NOT NULL`
+- `updated_at TIMESTAMPTZ NOT NULL`
+
+Notes:
+
+- OAuth provider tokens are encrypted at rest and never sent to the frontend.
+- Google OAuth can create a HumanTouch login session and store provider tokens
+  for the same user.
+- future tools should load provider tokens through backend integration services,
+  then enforce user, company, agent, scope, and confirmation checks before
+  calling external APIs.
+
 ### `agents`
 
 The canonical agent definition table.
@@ -154,7 +183,8 @@ Notes:
 
 - keep runtime-critical prompt inputs in `agent_info` so `system_prompt` can always be regenerated
 - keep early agent workspace configuration in `agent_info.workspace` until runs, artifacts, and tool policies justify dedicated tables
-- keep v1 tool permissions in `agent_info.allowed_tool_ids`; move to dedicated tool tables only when admin-managed catalogs, audit trails, or per-company integration config require it
+- keep v1 tool permissions in `agent_info.allowed_tool_ids`; they may be LLM-recommended on agent create/update, but backend validation decides what is stored
+- move to dedicated tool tables only when admin-managed catalogs, audit trails, or per-company integration config require it
 - enforce tool permissions by binding only the selected agent's allowed backend tools at runtime, not by prompt instructions alone
 - if the future agentic workspace gains stateful execution or artifacts, model that separately from conversation history
 
@@ -268,6 +298,8 @@ Current implementation:
 - prompt generation happens on create
 - the generator attempts an LLM-based compile step
 - if that fails, it falls back to a deterministic template prompt
+- tool recommendation also happens on create/update when explicit `allowed_tool_ids` are not supplied
+- tool recommendation returns only tool IDs; backend validation maps those IDs to stored permissions and runtime tool implementations
 
 ## Current Seed Data
 

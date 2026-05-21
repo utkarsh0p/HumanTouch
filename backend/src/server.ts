@@ -7,6 +7,7 @@ import { devAuthPlugin } from "./plugins/dev-auth.js";
 import { registerAgentRoutes } from "./routes/agents.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerIntegrationRoutes } from "./routes/integrations.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 
 const app = Fastify({
@@ -23,6 +24,7 @@ await devAuthPlugin(app);
 app.get("/health", async () => ({ status: "ok" }));
 
 await registerAuthRoutes(app);
+await registerIntegrationRoutes(app);
 await registerSessionRoutes(app);
 await registerAgentRoutes(app);
 await registerChatRoutes(app);

@@ -57,6 +57,12 @@ const envSchema = z
     GEMINI_MODEL: z.string().min(1).default("gemini-2.5-pro"),
     TAVILY_API_KEY: z.string().optional(),
     ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
+    FRONTEND_BASE_URL: z.string().url().optional(),
+    GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+    GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+    GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
+    GOOGLE_OAUTH_SCOPES: z.string().optional(),
+    TOKEN_ENCRYPTION_KEY: z.string().optional(),
   })
   .transform((env) => {
     const googleApiKey = env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY;
@@ -80,6 +86,29 @@ const envSchema = z
             .filter(Boolean),
         ),
       ),
+      frontendBaseUrl:
+        env.FRONTEND_BASE_URL ??
+        env.ALLOWED_ORIGINS.split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean)[0] ??
+        "http://localhost:3000",
+      googleOAuth: {
+        clientId: env.GOOGLE_OAUTH_CLIENT_ID,
+        clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+        redirectUri:
+          env.GOOGLE_OAUTH_REDIRECT_URI ??
+          `http://localhost:${env.PORT}/api/auth/google/callback`,
+        scopes:
+          env.GOOGLE_OAUTH_SCOPES?.split(",")
+            .map((scope) => scope.trim())
+            .filter(Boolean) ?? [
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/gmail.compose",
+          ],
+      },
+      tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
     };
   });
 

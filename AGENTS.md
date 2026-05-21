@@ -155,6 +155,7 @@ Keep the backend as a single Node.js service.
 - build LangGraph runtime state in backend services before graph execution
 - keep the main workflow as the single graph entrypoint, with admin and employee behavior in separate subgraphs
 - register tools centrally and bind only each selected agent's allowed tools at runtime
+- allow LLM tool recommendation only as a suggestion step; persist only backend-validated tool IDs
 
 ## Current Non-Goals
 

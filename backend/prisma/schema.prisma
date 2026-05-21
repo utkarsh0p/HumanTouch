@@ -19,6 +19,7 @@ model Company {
   agentMessages      AgentMessage[]
   agentRoleAssignments AgentRoleAssignment[]
   agentUserAssignments AgentUserAssignment[]
+  connectedAccounts  ConnectedAccount[]
 
   @@map("companies")
 }
@@ -41,6 +42,7 @@ model User {
   authSessions         AuthSession[]
   agentSessions        AgentSession[]
   agentUserAssignments AgentUserAssignment[]
+  connectedAccounts    ConnectedAccount[]
 
   @@map("users")
 }
@@ -58,6 +60,30 @@ model AuthSession {
   @@index([userId], map: "auth_sessions_user_id_idx")
   @@index([expiresAt], map: "auth_sessions_expires_at_idx")
   @@map("auth_sessions")
+}
+
+model ConnectedAccount {
+  id                    String    @id @db.Uuid
+  companyId             String    @map("company_id") @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  provider              String
+  providerAccountId     String    @map("provider_account_id")
+  providerEmail         String    @map("provider_email")
+  encryptedAccessToken  String?   @map("encrypted_access_token")
+  encryptedRefreshToken String?   @map("encrypted_refresh_token")
+  scopes                String[]
+  expiresAt             DateTime? @map("expires_at") @db.Timestamptz
+  status                String    @default("connected")
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, providerAccountId], map: "connected_accounts_user_provider_account_key")
+  @@index([companyId, provider], map: "connected_accounts_company_provider_idx")
+  @@index([userId, provider], map: "connected_accounts_user_provider_idx")
+  @@map("connected_accounts")
 }
 
 model Agent {

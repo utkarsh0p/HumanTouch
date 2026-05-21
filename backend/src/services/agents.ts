@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { defaultAdminUserId, defaultCompanyId } from "../constants/seed.js";
 import { prisma } from "../db/prisma.js";
 import { compileAgentSystemPrompt } from "../langgraph/agent-prompt-compiler.js";
+import { recommendToolIdsForAgent } from "../langgraph/tools/recommender.js";
 import {
   recommendDefaultToolIds,
   validateConfiguredToolIds,
@@ -168,7 +169,7 @@ async function buildUniqueSlug(name: string, excludeAgentId?: string): Promise<s
   return `${baseSlug}-${suffix}`;
 }
 
-function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
+async function normalizeAgentInfo(payload: AgentCreatePayload): Promise<AgentInfo> {
   const name = normalizeText(payload.name);
   const purpose = normalizeText(payload.purpose);
   const allowedTasks = normalizeText(payload.allowed_tasks);
@@ -185,7 +186,7 @@ function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
   };
   const allowedToolIds =
     payload.allowed_tool_ids === undefined
-      ? recommendDefaultToolIds(baseInfo)
+      ? await recommendToolIdsForAgent({ name, agentInfo: baseInfo })
       : validateConfiguredToolIds(normalizeStringList(payload.allowed_tool_ids));
 
   return {
@@ -247,7 +248,7 @@ export async function createAgent(
   const id = randomUUID();
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name);
-  const agentInfo = normalizeAgentInfo(payload);
+  const agentInfo = await normalizeAgentInfo(payload);
   const companyId = actor?.company_id ?? defaultCompanyId;
   const assignedRoles = resolveRoleAssignments(payload.assigned_role_keys ?? []);
   const resolvedUserIds = await resolveUserAssignments(
@@ -324,7 +325,7 @@ export async function updateAgent(
   const companyId = actor.company_id;
   const name = normalizeText(payload.name);
   const slug = await buildUniqueSlug(name, agentId);
-  const agentInfo = normalizeAgentInfo(payload);
+  const agentInfo = await normalizeAgentInfo(payload);
   const systemPrompt = await compileAgentSystemPrompt(name, agentInfo);
   const nextAssignedRoles =
     payload.assigned_role_keys === undefined

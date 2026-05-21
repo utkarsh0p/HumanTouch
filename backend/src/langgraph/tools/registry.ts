@@ -18,6 +18,11 @@ export type ToolDefinition = {
   tool: StructuredToolInterface;
 };
 
+export type ToolCatalogEntry = Pick<
+  ToolDefinition,
+  "id" | "label" | "category" | "risk" | "promptDescription"
+>;
+
 const toolRegistry = [
   {
     id: "web_search",
@@ -38,6 +43,18 @@ export function getConfiguredToolCatalog(): ToolDefinition[] {
 
     return !definition.requiresConfig;
   });
+}
+
+export function getPromptSafeToolCatalog(): ToolCatalogEntry[] {
+  return getConfiguredToolCatalog().map(
+    ({ id, label, category, risk, promptDescription }) => ({
+      id,
+      label,
+      category,
+      risk,
+      promptDescription,
+    }),
+  );
 }
 
 export function getConfiguredToolIds(): ToolId[] {

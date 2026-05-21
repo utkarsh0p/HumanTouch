@@ -27,14 +27,22 @@ type SignupValues = {
 
 type AuthSwitchProps = {
   isLoading?: boolean;
+  googleConfigured?: boolean;
+  googleMissing?: string[];
   initialMode?: "signin" | "signup";
+  notice?: string | null;
+  onGoogleLogin: () => void;
   onLogin: (values: LoginValues) => Promise<string | null | void>;
   onSignup: (values: SignupValues) => Promise<string | null | void>;
 };
 
 export function AuthSwitch({
   isLoading = false,
+  googleConfigured = false,
+  googleMissing = [],
   initialMode = "signin",
+  notice = null,
+  onGoogleLogin,
   onLogin,
   onSignup,
 }: AuthSwitchProps) {
@@ -93,14 +101,34 @@ export function AuthSwitch({
                 </div>
                 <h1 className="ht-auth-title">Sign in</h1>
                 <p className="ht-auth-copy">
-                  Log in as an employee by default. Use the seeded admin account when you need control-room access.
+                  Sign in to enter HumanTouch and continue working with your assigned agents.
                 </p>
+                <button
+                  className="ht-auth-button"
+                  disabled={isLoading}
+                  onClick={onGoogleLogin}
+                  type="button"
+                >
+                  <Globe className="size-4" />
+                  Continue with Google
+                </button>
+                {!googleConfigured ? (
+                  <p className="mt-2 text-xs leading-5 text-[#a79e90]">
+                    Google OAuth is implemented. Add the OAuth env values to enable this login.
+                  </p>
+                ) : null}
+                <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-[#786f64]">
+                  <span className="h-px flex-1 bg-white/10" />
+                  Or sign in with email
+                  <span className="h-px flex-1 bg-white/10" />
+                </div>
                 <div className="ht-auth-field">
                   <Mail className="size-4.5 text-[#867d70]" />
                   <input
                     autoComplete="email"
                     onChange={(event) => setLoginEmail(event.target.value)}
                     placeholder="Email"
+                    required
                     type="email"
                     value={loginEmail}
                   />
@@ -111,20 +139,15 @@ export function AuthSwitch({
                     autoComplete="current-password"
                     onChange={(event) => setLoginPassword(event.target.value)}
                     placeholder="Password"
+                    required
                     type="password"
                     value={loginPassword}
                   />
                 </div>
                 <button className="ht-auth-button" disabled={isLoading} type="submit">
                   <LogIn className="size-4" />
-                  {isLoading ? "Signing in..." : "Login"}
+                  {isLoading ? "Signing in..." : "Sign in"}
                 </button>
-                <div className="mt-4 rounded-[1.35rem] border border-[#3f3a34] bg-[#211f1b] px-4 py-3 text-left">
-                  <p className="text-xs uppercase tracking-[0.18em] text-[#8d8578]">Admin seed</p>
-                  <p className="mt-2 text-sm text-[#ede5d9]">Utkarsh Singh</p>
-                  <p className="text-sm text-[#b7afa0]">utkarshsingh@gmail.com</p>
-                  <p className="text-sm text-[#b7afa0]">Password: utkarshsingh</p>
-                </div>
               </form>
 
               <form className="ht-auth-form ht-auth-form-signup" onSubmit={handleSignupSubmit}>
@@ -134,14 +157,34 @@ export function AuthSwitch({
                 </div>
                 <h2 className="ht-auth-title">Sign up</h2>
                 <p className="ht-auth-copy">
-                  Create a regular employee account. Admin access stays reserved for the seeded admin user.
+                  Create an employee account for the workspace.
                 </p>
+                <button
+                  className="ht-auth-button"
+                  disabled={isLoading}
+                  onClick={onGoogleLogin}
+                  type="button"
+                >
+                  <Globe className="size-4" />
+                  Sign up with Google
+                </button>
+                {!googleConfigured ? (
+                  <p className="mt-2 text-xs leading-5 text-[#a79e90]">
+                    Google OAuth is implemented. Add the OAuth env values to enable this signup.
+                  </p>
+                ) : null}
+                <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-[#786f64]">
+                  <span className="h-px flex-1 bg-white/10" />
+                  Or create with email
+                  <span className="h-px flex-1 bg-white/10" />
+                </div>
                 <div className="ht-auth-field">
                   <UserRound className="size-4.5 text-[#867d70]" />
                   <input
                     autoComplete="name"
                     onChange={(event) => setSignupName(event.target.value)}
                     placeholder="Full name"
+                    required
                     type="text"
                     value={signupName}
                   />
@@ -152,6 +195,7 @@ export function AuthSwitch({
                     autoComplete="email"
                     onChange={(event) => setSignupEmail(event.target.value)}
                     placeholder="Email"
+                    required
                     type="email"
                     value={signupEmail}
                   />
@@ -160,8 +204,10 @@ export function AuthSwitch({
                   <LockKeyhole className="size-4.5 text-[#867d70]" />
                   <input
                     autoComplete="new-password"
+                    minLength={8}
                     onChange={(event) => setSignupPassword(event.target.value)}
                     placeholder="Password"
+                    required
                     type="password"
                     value={signupPassword}
                   />
@@ -221,6 +267,12 @@ export function AuthSwitch({
               </span>
             </div>
             {error ? <p className="text-sm text-[#f0a487]">{error}</p> : null}
+            {notice ? <p className="text-sm text-[#d8cbbb]">{notice}</p> : null}
+            {!googleConfigured && googleMissing.length > 0 ? (
+              <p className="max-w-xl text-center text-xs leading-5 text-[#8f8678]">
+                Missing OAuth config: {googleMissing.join(", ")}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

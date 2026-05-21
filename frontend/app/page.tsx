@@ -86,6 +86,14 @@ type AuthenticatedUser = {
   is_admin: boolean;
 };
 
+type AuthProvidersResponse = {
+  google: {
+    configured: boolean;
+    missing: string[];
+    scopes: string[];
+  };
+};
+
 function resolveApiBaseUrl(): string {
   const fallback = "http://localhost:3001";
   if (typeof window === "undefined") {
@@ -294,6 +302,11 @@ export default function HomePage() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [archivingAgentId, setArchivingAgentId] = useState<string | null>(null);
   const [pendingArchiveAgent, setPendingArchiveAgent] = useState<Agent | null>(null);
+  const [googleAuthConfig, setGoogleAuthConfig] = useState<{
+    configured: boolean;
+    missing: string[];
+  }>({ configured: false, missing: [] });
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
   const sessionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -301,7 +314,31 @@ export default function HomePage() {
   const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
+    void loadAuthProviders();
     void loadCurrentUser();
+
+    const params = new URLSearchParams(window.location.search);
+    const authProvider = params.get("auth");
+    const authStatus = params.get("auth_status");
+    if (authProvider === "google" && authStatus) {
+      const authDetail = params.get("auth_detail");
+      setAuthNotice(
+        authStatus === "signed_in"
+          ? "Signed in with Google."
+          : authDetail
+            ? `Google sign-in failed: ${authDetail}`
+            : "Google sign-in failed. Check your OAuth configuration and try again.",
+      );
+      params.delete("auth");
+      params.delete("auth_status");
+      params.delete("auth_detail");
+      const nextSearch = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -398,6 +435,7 @@ export default function HomePage() {
     setPendingDeleteSession(null);
     setEditingAgentId(null);
     setPendingArchiveAgent(null);
+    setAuthNotice(null);
     resetCreateAgentForm();
   }
 
@@ -523,7 +561,7 @@ export default function HomePage() {
         throw new Error(await parseError(response, "Failed to restore your session."));
       }
 
-      const data = (await response.json()) as { user: AuthenticatedUser };
+      const data = (await response.json()) as { user: AuthenticatedUser | null };
       setCurrentUser(data.user);
     } catch (loadError) {
       setError(
@@ -532,6 +570,27 @@ export default function HomePage() {
       setCurrentUser(null);
     } finally {
       setIsAuthLoading(false);
+    }
+  }
+
+  async function loadAuthProviders() {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/auth/providers`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        setGoogleAuthConfig({ configured: false, missing: [] });
+        return;
+      }
+
+      const data = (await response.json()) as AuthProvidersResponse;
+      setGoogleAuthConfig({
+        configured: data.google.configured,
+        missing: data.google.missing ?? [],
+      });
+    } catch {
+      setGoogleAuthConfig({ configured: false, missing: [] });
     }
   }
 
@@ -608,6 +667,7 @@ export default function HomePage() {
   async function handleLogin(values: { email: string; password: string }) {
     setIsAuthSubmitting(true);
     setError(null);
+    setAuthNotice(null);
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
@@ -640,6 +700,7 @@ export default function HomePage() {
   }) {
     setIsAuthSubmitting(true);
     setError(null);
+    setAuthNotice(null);
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/signup`, {
@@ -682,6 +743,18 @@ export default function HomePage() {
       setError(null);
       resetWorkspace();
     }
+  }
+
+  function handleGoogleAuth() {
+    if (!googleAuthConfig.configured) {
+      const missing = googleAuthConfig.missing.length
+        ? googleAuthConfig.missing.join(", ")
+        : "Google OAuth environment variables";
+      setAuthNotice(`Google OAuth is implemented but not configured locally. Missing: ${missing}.`);
+      return;
+    }
+
+    window.location.href = `${apiBaseUrl}/api/auth/google/start`;
   }
 
   async function createSession(agentId?: string) {
@@ -1153,7 +1226,11 @@ export default function HomePage() {
   if (!currentUser) {
     return (
       <AuthSwitch
+        googleConfigured={googleAuthConfig.configured}
+        googleMissing={googleAuthConfig.missing}
         isLoading={isAuthSubmitting}
+        notice={authNotice}
+        onGoogleLogin={handleGoogleAuth}
         onLogin={handleLogin}
         onSignup={handleSignup}
       />

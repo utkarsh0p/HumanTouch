@@ -112,3 +112,37 @@ export async function createLocalUser(input: CreateLocalUserInput): Promise<Auth
 
   return toAuthenticatedUser(user);
 }
+
+export type CreateGoogleUserInput = {
+  email: string;
+  full_name: string;
+};
+
+export async function createGoogleUser(input: CreateGoogleUserInput): Promise<AuthenticatedUser> {
+  const user = await prisma.user.create({
+    data: {
+      id: randomUUID(),
+      companyId: defaultCompanyId,
+      email: input.email,
+      fullName: input.full_name,
+      roleKey: "employee",
+      isAdmin: false,
+      authProvider: "google",
+      passwordHash: null,
+    },
+  });
+
+  return toAuthenticatedUser(user);
+}
+
+export async function markUserGoogleAuthenticated(userId: string): Promise<AuthenticatedUser> {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      authProvider: "google",
+      updatedAt: new Date(),
+    },
+  });
+
+  return toAuthenticatedUser(user);
+}

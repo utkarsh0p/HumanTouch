@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "HumanTouch",
   description: "Admin agent workspace for HumanTouch",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({

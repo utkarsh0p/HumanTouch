@@ -63,6 +63,19 @@ function buildExpiredCookieValue(): string {
   return segments.join("; ");
 }
 
+function appendSetCookieHeader(reply: FastifyReply, cookieValue: string): void {
+  const existingHeader = reply.getHeader("Set-Cookie");
+  if (!existingHeader) {
+    reply.header("Set-Cookie", cookieValue);
+    return;
+  }
+
+  const existingCookies = Array.isArray(existingHeader)
+    ? existingHeader.map(String)
+    : [String(existingHeader)];
+  reply.header("Set-Cookie", [...existingCookies, cookieValue]);
+}
+
 export async function createAuthSession(userId: string): Promise<string> {
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
@@ -128,9 +141,9 @@ export async function revokeAuthSessionFromRequest(request: FastifyRequest): Pro
 
 export function setAuthCookie(reply: FastifyReply, token: string): void {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  reply.header("Set-Cookie", buildCookieValue(token, expiresAt));
+  appendSetCookieHeader(reply, buildCookieValue(token, expiresAt));
 }
 
 export function clearAuthCookie(reply: FastifyReply): void {
-  reply.header("Set-Cookie", buildExpiredCookieValue());
+  appendSetCookieHeader(reply, buildExpiredCookieValue());
 }
