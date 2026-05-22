@@ -7,7 +7,7 @@ import { decryptToken, encryptToken } from "./token-encryption.js";
 
 const ACCESS_TOKEN_EXPIRY_SKEW_MS = 60 * 1000;
 
-export type IntegrationProvider = "google" | "linkedin" | "meta";
+export type IntegrationProvider = "google" | "github" | "linkedin" | "meta";
 
 type OAuthTokenResponse = {
   access_token?: string;
@@ -31,6 +31,19 @@ type GoogleUserInfoResponse = {
   email?: string;
   email_verified?: boolean;
   name?: string;
+};
+
+type GitHubUserResponse = {
+  id?: number;
+  login?: string;
+  email?: string | null;
+  name?: string | null;
+};
+
+type GitHubEmailResponse = {
+  email?: string;
+  primary?: boolean;
+  verified?: boolean;
 };
 
 type TokenRefreshInput = {
@@ -65,7 +78,7 @@ export type ConnectedAccountCredentials = {
 
 function parseScopes(scope: string | undefined, fallback: string[] = []): string[] {
   return scope
-    ?.split(" ")
+    ?.split(/[,\s]+/)
     .map((item) => item.trim())
     .filter(Boolean) ?? fallback;
 }
@@ -83,6 +96,7 @@ async function refreshWithStandardOAuthTokenEndpoint(input: {
   const response = await fetch(input.tokenEndpoint, {
     method: "POST",
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
@@ -96,6 +110,23 @@ async function refreshWithStandardOAuthTokenEndpoint(input: {
   const payload = (await response.json()) as OAuthTokenResponse;
   if (!response.ok) {
     throw new Error(payload.error_description ?? payload.error ?? "OAuth token refresh failed.");
+  }
+
+  return payload;
+}
+
+async function fetchGitHubJson<T>(url: string, accessToken: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+
+  const payload = (await response.json()) as T;
+  if (!response.ok) {
+    throw new Error("Failed to load GitHub account profile.");
   }
 
   return payload;
@@ -121,6 +152,38 @@ const providerTokenAdapters: Record<IntegrationProvider, ProviderTokenAdapter> =
         id: googleUser.sub,
         email: googleUser.email?.toLowerCase() ?? null,
         name: googleUser.name ?? null,
+      };
+    },
+  },
+  github: {
+    tokenEndpoint: "https://github.com/login/oauth/access_token",
+    fetchProfile: async (accessToken) => {
+      const githubUser = await fetchGitHubJson<GitHubUserResponse>(
+        "https://api.github.com/user",
+        accessToken,
+      );
+      if (!githubUser.id) {
+        throw new Error("GitHub account profile did not include an id.");
+      }
+
+      let email = githubUser.email?.toLowerCase() ?? null;
+      if (!email) {
+        const emails = await fetchGitHubJson<GitHubEmailResponse[]>(
+          "https://api.github.com/user/emails",
+          accessToken,
+        );
+        email =
+          emails
+            .find((item) => item.primary && item.verified && item.email)
+            ?.email?.toLowerCase() ??
+          emails.find((item) => item.verified && item.email)?.email?.toLowerCase() ??
+          null;
+      }
+
+      return {
+        id: String(githubUser.id),
+        email,
+        name: githubUser.name ?? githubUser.login ?? null,
       };
     },
   },
@@ -151,6 +214,9 @@ function providerOAuthConfig(provider: IntegrationProvider): {
 } {
   if (provider === "google") {
     return settings.googleOAuth;
+  }
+  if (provider === "github") {
+    return settings.githubOAuth;
   }
   if (provider === "linkedin") {
     return settings.linkedinOAuth;
@@ -218,6 +284,7 @@ export async function exchangeProviderAuthorizationCode(
   const response = await fetch(adapter.tokenEndpoint, {
     method: "POST",
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({

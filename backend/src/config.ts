@@ -58,13 +58,15 @@ const envSchema = z
     TAVILY_API_KEY: z.string().optional(),
     ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
     FRONTEND_BASE_URL: z.string().url().optional(),
-    GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
-    GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
     GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
     GOOGLE_OAUTH_SCOPES: z.string().optional(),
     AUTH_SECRET: z.string().optional(),
     AUTH_GOOGLE_ID: z.string().optional(),
     AUTH_GOOGLE_SECRET: z.string().optional(),
+    GITHUB_CLIENT_ID: z.string().optional(),
+    GITHUB_CLIENT_SECRET: z.string().optional(),
+    GITHUB_REDIRECT_URI: z.string().url().optional(),
+    GITHUB_SCOPES: z.string().optional(),
     LINKEDIN_CLIENT_ID: z.string().optional(),
     LINKEDIN_CLIENT_SECRET: z.string().optional(),
     LINKEDIN_REDIRECT_URI: z.string().url().optional(),
@@ -104,8 +106,8 @@ const envSchema = z
           .filter(Boolean)[0] ??
         "http://localhost:3000",
       googleOAuth: {
-        clientId: env.GOOGLE_OAUTH_CLIENT_ID ?? env.AUTH_GOOGLE_ID,
-        clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET ?? env.AUTH_GOOGLE_SECRET,
+        clientId: env.AUTH_GOOGLE_ID,
+        clientSecret: env.AUTH_GOOGLE_SECRET,
         redirectUri:
           env.GOOGLE_OAUTH_REDIRECT_URI ??
           `http://localhost:${env.PORT}/api/integrations/google/callback`,
@@ -119,6 +121,17 @@ const envSchema = z
             "https://www.googleapis.com/auth/gmail.compose",
             "https://www.googleapis.com/auth/gmail.readonly",
           ],
+      },
+      githubOAuth: {
+        clientId: env.GITHUB_CLIENT_ID,
+        clientSecret: env.GITHUB_CLIENT_SECRET,
+        redirectUri:
+          env.GITHUB_REDIRECT_URI ??
+          `http://localhost:${env.PORT}/api/integrations/github/callback`,
+        scopes:
+          env.GITHUB_SCOPES?.split(",")
+            .map((scope) => scope.trim())
+            .filter(Boolean) ?? ["read:user", "user:email"],
       },
       linkedinOAuth: {
         clientId: env.LINKEDIN_CLIENT_ID,

@@ -113,12 +113,13 @@ export async function createLocalUser(input: CreateLocalUserInput): Promise<Auth
   return toAuthenticatedUser(user);
 }
 
-export type CreateGoogleUserInput = {
+export type CreateOAuthUserInput = {
   email: string;
   full_name: string;
+  auth_provider: string;
 };
 
-export async function createGoogleUser(input: CreateGoogleUserInput): Promise<AuthenticatedUser> {
+export async function createOAuthUser(input: CreateOAuthUserInput): Promise<AuthenticatedUser> {
   const user = await prisma.user.create({
     data: {
       id: randomUUID(),
@@ -127,7 +128,7 @@ export async function createGoogleUser(input: CreateGoogleUserInput): Promise<Au
       fullName: input.full_name,
       roleKey: "employee",
       isAdmin: false,
-      authProvider: "google",
+      authProvider: input.auth_provider,
       passwordHash: null,
     },
   });
@@ -135,11 +136,14 @@ export async function createGoogleUser(input: CreateGoogleUserInput): Promise<Au
   return toAuthenticatedUser(user);
 }
 
-export async function markUserGoogleAuthenticated(userId: string): Promise<AuthenticatedUser> {
+export async function markUserOAuthAuthenticated(
+  userId: string,
+  authProvider: string,
+): Promise<AuthenticatedUser> {
   const user = await prisma.user.update({
     where: { id: userId },
     data: {
-      authProvider: "google",
+      authProvider,
       updatedAt: new Date(),
     },
   });
@@ -147,19 +151,31 @@ export async function markUserGoogleAuthenticated(userId: string): Promise<Authe
   return toAuthenticatedUser(user);
 }
 
-export async function resolveOrCreateGoogleUser(input: {
+export async function resolveOrCreateOAuthUser(input: {
   email: string;
   full_name?: string | null;
+  auth_provider: string;
 }): Promise<AuthenticatedUser> {
   const normalizedEmail = input.email.trim().toLowerCase();
   const existingUser = await getUserByEmail(normalizedEmail);
   if (existingUser) {
-    return markUserGoogleAuthenticated(existingUser.id);
+    return markUserOAuthAuthenticated(existingUser.id, input.auth_provider);
   }
 
-  return createGoogleUser({
+  return createOAuthUser({
     email: normalizedEmail,
     full_name:
       input.full_name?.trim() || normalizedEmail.split("@")[0] || normalizedEmail,
+    auth_provider: input.auth_provider,
+  });
+}
+
+export async function resolveOrCreateGoogleUser(input: {
+  email: string;
+  full_name?: string | null;
+}): Promise<AuthenticatedUser> {
+  return resolveOrCreateOAuthUser({
+    ...input,
+    auth_provider: "google",
   });
 }

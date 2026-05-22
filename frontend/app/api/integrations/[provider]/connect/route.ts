@@ -7,19 +7,21 @@ function apiBaseUrl(): string {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ provider: string }> },
 ) {
   const session = await auth();
   const email = session?.user?.email;
-  if (!email) {
+  const cookie = request.headers.get("cookie");
+  if (!email && !cookie) {
     return NextResponse.redirect(new URL("/", process.env.AUTH_URL ?? "http://localhost:3000"));
   }
 
   const { provider } = await params;
   const response = await fetch(`${apiBaseUrl()}/api/integrations/${provider}/connect`, {
     headers: {
-      "x-auth-user-email": email,
+      ...(email ? { "x-auth-user-email": email } : {}),
+      ...(cookie ? { cookie } : {}),
     },
     redirect: "manual",
   });

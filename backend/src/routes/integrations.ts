@@ -6,9 +6,11 @@ import { z } from "zod";
 import { settings } from "../config.js";
 import {
   disconnectConnectedAccount,
-  exchangeGoogleAuthorizationCode,
+  exchangeProviderAuthorizationCode,
+  fetchProviderProfile,
   fetchGoogleUserInfo,
   listConnectedAccounts,
+  saveConnectedAccount,
   saveGoogleConnectedAccount,
 } from "../services/integrations.js";
 import { getUserById } from "../services/users.js";
@@ -16,8 +18,9 @@ import { getUserById } from "../services/users.js";
 const OAUTH_STATE_COOKIE = "humantouch_integration_oauth_state";
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+const GITHUB_AUTHORIZATION_ENDPOINT = "https://github.com/login/oauth/authorize";
 
-const providerSchema = z.enum(["google", "linkedin", "meta"]);
+const providerSchema = z.enum(["google", "github", "linkedin", "meta"]);
 type ProviderKey = z.infer<typeof providerSchema>;
 
 const callbackQuerySchema = z.object({
@@ -84,6 +87,9 @@ function providerConfig(provider: ProviderKey): {
   if (provider === "google") {
     return settings.googleOAuth;
   }
+  if (provider === "github") {
+    return settings.githubOAuth;
+  }
   if (provider === "linkedin") {
     return settings.linkedinOAuth;
   }
@@ -98,6 +104,8 @@ function missingProviderConfig(provider: ProviderKey): string[] {
     missing.push(
       provider === "google"
         ? "AUTH_GOOGLE_ID"
+        : provider === "github"
+          ? "GITHUB_CLIENT_ID"
         : provider === "linkedin"
           ? "LINKEDIN_CLIENT_ID"
           : "META_CLIENT_ID",
@@ -107,6 +115,8 @@ function missingProviderConfig(provider: ProviderKey): string[] {
     missing.push(
       provider === "google"
         ? "AUTH_GOOGLE_SECRET"
+        : provider === "github"
+          ? "GITHUB_CLIENT_SECRET"
         : provider === "linkedin"
           ? "LINKEDIN_CLIENT_SECRET"
           : "META_CLIENT_SECRET",
@@ -152,12 +162,31 @@ function buildGoogleAuthorizationUrl(state: string): string {
   return authorizationUrl.toString();
 }
 
+function buildGitHubAuthorizationUrl(state: string): string {
+  const config = providerConfig("github");
+  if (!config.clientId || !config.clientSecret || !settings.tokenEncryptionKey) {
+    throw new Error("GitHub OAuth is not configured.");
+  }
+
+  const authorizationUrl = new URL(GITHUB_AUTHORIZATION_ENDPOINT);
+  authorizationUrl.searchParams.set("client_id", config.clientId);
+  authorizationUrl.searchParams.set("redirect_uri", config.redirectUri);
+  authorizationUrl.searchParams.set("scope", config.scopes.join(" "));
+  authorizationUrl.searchParams.set("state", state);
+  return authorizationUrl.toString();
+}
+
 function buildProviderSummaries() {
   return {
     google: {
       configured: isProviderConfigured("google"),
       missing: missingProviderConfig("google"),
       scopes: settings.googleOAuth.scopes,
+    },
+    github: {
+      configured: isProviderConfigured("github"),
+      missing: missingProviderConfig("github"),
+      scopes: settings.githubOAuth.scopes,
     },
     linkedin: {
       configured: isProviderConfigured("linkedin"),
@@ -194,7 +223,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         return;
       }
 
-      if (provider !== "google") {
+      if (provider !== "google" && provider !== "github") {
         redirectToFrontend(reply, {
           integration: provider,
           integration_status: "error",
@@ -205,7 +234,11 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
       const state = randomBytes(32).toString("base64url");
       reply.header("Set-Cookie", buildStateCookieValue(provider, state, request.currentUser.id));
-      reply.redirect(buildGoogleAuthorizationUrl(state));
+      reply.redirect(
+        provider === "google"
+          ? buildGoogleAuthorizationUrl(state)
+          : buildGitHubAuthorizationUrl(state),
+      );
     },
   );
 
@@ -265,7 +298,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         return;
       }
 
-      if (provider !== "google") {
+      if (provider !== "google" && provider !== "github") {
         redirectToFrontend(reply, {
           integration: provider,
           integration_status: "error",
@@ -275,36 +308,46 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       }
 
       try {
-        const config = providerConfig("google");
+        const config = providerConfig(provider);
         if (!config.clientId || !config.clientSecret) {
-          throw new Error("Google OAuth is not configured.");
+          throw new Error(`${provider} OAuth is not configured.`);
         }
 
-        const tokenResponse = await exchangeGoogleAuthorizationCode({
+        const tokenResponse = await exchangeProviderAuthorizationCode(provider, {
           code: query.code,
           clientId: config.clientId,
           clientSecret: config.clientSecret,
           redirectUri: config.redirectUri,
         });
         if (!tokenResponse.access_token) {
-          throw new Error("Google did not return an access token.");
+          throw new Error(`${provider} did not return an access token.`);
         }
 
-        const googleUser = await fetchGoogleUserInfo(tokenResponse.access_token);
-        await saveGoogleConnectedAccount({
-          user,
-          tokenResponse,
-          googleUser,
-        });
+        if (provider === "google") {
+          const googleUser = await fetchGoogleUserInfo(tokenResponse.access_token);
+          await saveGoogleConnectedAccount({
+            user,
+            tokenResponse,
+            googleUser,
+          });
+        } else {
+          const profile = await fetchProviderProfile(provider, tokenResponse.access_token);
+          await saveConnectedAccount({
+            user,
+            provider,
+            tokenResponse,
+            profile,
+          });
+        }
 
         redirectToFrontend(reply, {
-          integration: "google",
+          integration: provider,
           integration_status: "connected",
         });
       } catch (error) {
-        request.log.error({ error }, "Google OAuth callback failed.");
+        request.log.error({ error }, `${provider} OAuth callback failed.`);
         redirectToFrontend(reply, {
-          integration: "google",
+          integration: provider,
           integration_status: "error",
           integration_detail: "callback_failed",
         });

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  BriefcaseBusiness,
   Globe,
   LockKeyhole,
   LogIn,
@@ -263,7 +262,7 @@ export function AuthSwitch({
                 <Globe className="size-4" />
               </span>
               <span className="ht-auth-social">
-                <BriefcaseBusiness className="size-4" />
+                <UserRound className="size-4" />
               </span>
             </div>
             {error ? <p className="text-sm text-[#f0a487]">{error}</p> : null}

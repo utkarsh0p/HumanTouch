@@ -90,7 +90,7 @@ type AuthenticatedUser = {
   is_admin: boolean;
 };
 
-type IntegrationProviderKey = "google" | "linkedin" | "meta";
+type IntegrationProviderKey = "google" | "github" | "linkedin" | "meta";
 
 type IntegrationProviderSummary = {
   configured: boolean;
@@ -339,6 +339,8 @@ export default function HomePage() {
   const [pendingArchiveAgent, setPendingArchiveAgent] = useState<Agent | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationsResponse | null>(null);
   const [isIntegrationMenuOpen, setIsIntegrationMenuOpen] = useState(false);
+  const [pendingIntegrationProvider, setPendingIntegrationProvider] =
+    useState<IntegrationProviderKey | null>(null);
   const [integrationNotice, setIntegrationNotice] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -402,8 +404,7 @@ export default function HomePage() {
     }
 
     if (authSessionStatus === "unauthenticated") {
-      setCurrentUser(null);
-      setIsAuthLoading(false);
+      void loadCurrentUser(null);
       return;
     }
 
@@ -871,7 +872,8 @@ export default function HomePage() {
 
   function handleIntegrationConnect(provider: IntegrationProviderKey) {
     const providerSummary = integrations?.providers[provider];
-    const providerLabel = provider === "meta" ? "Meta" : provider[0].toUpperCase() + provider.slice(1);
+    const providerLabel =
+      provider === "meta" ? "Meta" : provider === "github" ? "GitHub" : provider[0].toUpperCase() + provider.slice(1);
 
     if (!providerSummary?.configured) {
       const missing = providerSummary?.missing.length
@@ -883,6 +885,35 @@ export default function HomePage() {
     }
 
     window.location.href = `/api/integrations/${provider}/connect`;
+  }
+
+  async function handleIntegrationDisconnect(provider: IntegrationProviderKey) {
+    const providerLabel =
+      provider === "meta" ? "Meta" : provider === "github" ? "GitHub" : provider[0].toUpperCase() + provider.slice(1);
+
+    setPendingIntegrationProvider(provider);
+    setIntegrationNotice(null);
+
+    try {
+      const response = await apiFetch(`/api/integrations/${provider}/disconnect`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, `Failed to disconnect ${providerLabel}.`));
+      }
+
+      await loadIntegrations();
+      setIntegrationNotice(`${providerLabel} disconnected.`);
+    } catch (disconnectError) {
+      setIntegrationNotice(
+        disconnectError instanceof Error
+          ? disconnectError.message
+          : `Failed to disconnect ${providerLabel}.`,
+      );
+    } finally {
+      setPendingIntegrationProvider(null);
+    }
   }
 
   async function createSession(agentId?: string) {
@@ -1410,6 +1441,7 @@ export default function HomePage() {
     label: string;
   }> = [
     { provider: "google", label: "Google" },
+    { provider: "github", label: "GitHub" },
     { provider: "linkedin", label: "LinkedIn" },
     { provider: "meta", label: "Meta" },
   ];
@@ -1427,6 +1459,14 @@ export default function HomePage() {
       return "missing";
     }
     return "available";
+  }
+
+  function connectedIntegrationAccount(provider: IntegrationProviderKey): IntegrationAccount | null {
+    return (
+      integrations?.accounts.find(
+        (account) => account.provider === provider && account.status === "connected",
+      ) ?? null
+    );
   }
 
   function renderComposer(className?: string) {
@@ -1500,9 +1540,15 @@ export default function HomePage() {
                   </button>
                 </PromptInputAction>
                 {isIntegrationMenuOpen ? (
-                  <div className="absolute bottom-10 left-0 z-30 w-64 rounded-2xl border border-white/10 bg-[#211f1b] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]">
+                  <div className="absolute bottom-10 left-0 z-30 w-80 rounded-2xl border border-white/10 bg-[#211f1b] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]">
+                    <div className="border-b border-white/8 px-3 py-2.5">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[#8d8579]">HumanTouch user</p>
+                      <p className="mt-1 truncate text-sm text-[#ece5d7]">{currentUser?.email ?? ""}</p>
+                    </div>
                     {integrationOptions.map((option) => {
                       const status = integrationStatus(option.provider);
+                      const account = connectedIntegrationAccount(option.provider);
+                      const isPending = pendingIntegrationProvider === option.provider;
                       const statusLabel =
                         status === "connected"
                           ? "connected"
@@ -1513,20 +1559,51 @@ export default function HomePage() {
                       return (
                         <button
                           key={option.provider}
-                          className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-[#ddd5c8] transition hover:bg-white/6"
-                          onClick={() => handleIntegrationConnect(option.provider)}
+                          className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-[#ddd5c8] transition hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={isPending}
+                          onClick={() => {
+                            if (status === "connected") {
+                              void handleIntegrationDisconnect(option.provider);
+                              return;
+                            }
+
+                            handleIntegrationConnect(option.provider);
+                          }}
                           type="button"
                         >
-                          <span>{option.label}</span>
-                          <span className="inline-flex items-center gap-1.5 text-xs text-[#9f9788]">
-                            {status === "connected" ? (
-                              <CircleCheck className="size-3.5 text-[#a8c8a6]" />
-                            ) : status === "missing" ? (
-                              <CircleAlert className="size-3.5 text-[#d2bd7a]" />
-                            ) : (
-                              <Cable className="size-3.5" />
-                            )}
-                            {statusLabel}
+                          <span className="min-w-0">
+                            <span className="block">{option.label}</span>
+                            {account ? (
+                              <span className="mt-0.5 block truncate text-xs text-[#8f8778]">
+                                Connected as {account.provider_email ?? account.provider_account_id}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="inline-flex items-center gap-2 text-xs text-[#9f9788]">
+                            <span
+                              aria-hidden
+                              className={`relative inline-flex h-5 w-9 rounded-full border transition ${
+                                status === "connected"
+                                  ? "border-[#6f8f67] bg-[#405f3b]"
+                                  : "border-white/12 bg-[#302d28]"
+                              }`}
+                            >
+                              <span
+                                className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-[#e8dfd0] transition ${
+                                  status === "connected" ? "left-4.5" : "left-0.5"
+                                }`}
+                              />
+                            </span>
+                            <span className="inline-flex items-center gap-1.5">
+                              {status === "connected" ? (
+                                <CircleCheck className="size-3.5 text-[#a8c8a6]" />
+                              ) : status === "missing" ? (
+                                <CircleAlert className="size-3.5 text-[#d2bd7a]" />
+                              ) : (
+                                <Cable className="size-3.5" />
+                              )}
+                              {isPending ? "disconnecting" : statusLabel}
+                            </span>
                           </span>
                         </button>
                       );

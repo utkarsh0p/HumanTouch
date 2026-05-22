@@ -11,8 +11,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     (process.env.NODE_ENV === "production" ? undefined : "humantouch-local-auth-secret"),
   providers: [
     Google({
-      clientId: process.env.AUTH_GOOGLE_ID ?? process.env.GOOGLE_OAUTH_CLIENT_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET ?? process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      clientId: process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET,
       authorization: {
         params: {
           prompt: "select_account",
@@ -44,7 +44,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         body: JSON.stringify({
           email,
           name: typeof profile?.name === "string" ? profile.name : null,
-          provider: "google",
+          provider: account.provider,
         }),
       });
 

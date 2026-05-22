@@ -37,15 +37,12 @@ The canonical data-model reference is in `SCHEMA.md`.
 
 ## Local setup
 
-1. Copy backend values into `.env` at the repo root.
-2. Copy frontend auth values into `frontend/.env.local`. NextAuth loads env from the frontend app directory:
+1. Copy backend, auth, and integration values into `.env` at the repo root.
+2. Keep only frontend-local public values in `frontend/.env.local`. The frontend loads root `.env` through `frontend/next.config.ts`.
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
-AUTH_SECRET=
 AUTH_URL=http://localhost:3000
-AUTH_GOOGLE_ID=
-AUTH_GOOGLE_SECRET=
 ```
 
 3. Start the backend:
@@ -106,10 +103,14 @@ ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:300
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 FRONTEND_BASE_URL=http://localhost:3000
 AUTH_SECRET=
-GOOGLE_OAUTH_CLIENT_ID=
-GOOGLE_OAUTH_CLIENT_SECRET=
+AUTH_GOOGLE_ID=
+AUTH_GOOGLE_SECRET=
 GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001/api/integrations/google/callback
 GOOGLE_OAUTH_SCOPES=openid,email,profile,https://www.googleapis.com/auth/gmail.compose,https://www.googleapis.com/auth/gmail.readonly
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_REDIRECT_URI=http://localhost:3001/api/integrations/github/callback
+GITHUB_SCOPES=read:user,user:email
 TOKEN_ENCRYPTION_KEY=
 LINKEDIN_CLIENT_ID=
 LINKEDIN_CLIENT_SECRET=
@@ -235,15 +236,15 @@ curl -H "x-dev-user-email: utkarshsingh@gmail.com" http://localhost:3001/api/age
 ## NextAuth Login and Tool Integrations
 
 Google login/signup is handled by NextAuth in the frontend app. Register this
-login callback on the Google OAuth client used by `AUTH_GOOGLE_ID` and
+login callback on the OAuth client used by `AUTH_GOOGLE_ID` and
 `AUTH_GOOGLE_SECRET`:
 
 ```text
 http://localhost:3000/api/auth/callback/google
 ```
 
-The backend does not own the Google login OAuth redirect. NextAuth signs in the
-user and calls the backend sync route so HumanTouch can create or update its
+The backend does not own the login OAuth redirect. NextAuth signs in the user
+and calls the backend sync route so HumanTouch can create or update its
 local user row.
 
 Tool integrations are separate from login OAuth. They store connected-account
@@ -253,18 +254,21 @@ integration routes are:
 - `POST /api/auth/nextauth/sync`
 - `GET /api/integrations`
 - `POST /api/integrations/google/disconnect`
+- `POST /api/integrations/github/disconnect`
 - `GET /api/tools`
 
-For tool integrations, register this backend callback on the Google OAuth client
-used by `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`:
+For tool integrations, register these backend callbacks on the OAuth clients
+used by `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `GITHUB_CLIENT_ID`, and
+`GITHUB_CLIENT_SECRET`:
 
 ```text
 http://localhost:3001/api/integrations/google/callback
+http://localhost:3001/api/integrations/github/callback
 ```
 
 The backend stores tool-integration access and refresh tokens encrypted in
 `humantouch.connected_accounts`. The frontend only receives connection status
-and provider email, never raw Google tokens.
+and provider email, never raw provider tokens.
 
 ## Database Access
 
