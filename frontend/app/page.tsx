@@ -118,7 +118,7 @@ type IntegrationsResponse = {
 type ToolCatalogEntry = {
   id: string;
   label: string;
-  category: "research" | "company_data" | "ticketing" | "email" | "admin";
+  category: "research" | "company_data" | "ticketing" | "email" | "developer" | "admin";
   risk: "low" | "medium" | "high";
   requiresConfig: boolean;
   configured: boolean;
@@ -1429,6 +1429,7 @@ export default function HomePage() {
     company_data: "Company data",
     ticketing: "Ticketing",
     email: "Email",
+    developer: "Developer",
     admin: "Admin",
   };
   const toolRiskStyles: Record<ToolCatalogEntry["risk"], string> = {

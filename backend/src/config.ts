@@ -131,7 +131,7 @@ const envSchema = z
         scopes:
           env.GITHUB_SCOPES?.split(",")
             .map((scope) => scope.trim())
-            .filter(Boolean) ?? ["read:user", "user:email"],
+            .filter(Boolean) ?? ["read:user", "user:email", "repo"],
       },
       linkedinOAuth: {
         clientId: env.LINKEDIN_CLIENT_ID,

@@ -119,6 +119,16 @@ Keep the first UI simple:
 - current agent indicator
 - room for future execution/progress state
 
+Provider/account UX:
+
+- keep HumanTouch login identity distinct from connected external provider accounts
+- show the current HumanTouch user email near provider connection controls
+- show each connected provider account as `Connected as <provider email/account id>`
+- use an on/off toggle pattern for provider connections:
+  - off/not connected starts the provider OAuth connect flow
+  - on/connected disconnects the provider and clears stored tokens
+- do not imply that the HumanTouch login email must match Google, GitHub, or other provider emails
+
 ## Architecture Direction
 
 - frontend: Next.js + Tailwind CSS
@@ -156,6 +166,19 @@ Keep the backend as a single Node.js service.
 - keep the main workflow as the single graph entrypoint, with admin and employee behavior in separate subgraphs
 - register tools centrally and bind only each selected agent's allowed tools at runtime
 - allow LLM tool recommendation only as a suggestion step; persist only backend-validated tool IDs
+
+## Auth and Provider Integrations
+
+Keep app login auth separate from connected-account provider integrations.
+
+- HumanTouch auth identifies the app user and owns workspace access, agent permissions, sessions, and company scoping
+- connected-account providers grant external tokens for tools and are owned by the current HumanTouch user
+- Google login uses NextAuth in the frontend and only creates/restores the HumanTouch user session
+- Google, GitHub, LinkedIn, and Meta in the provider menu are tool integrations, not necessarily login methods
+- backend integration OAuth callbacks store encrypted provider tokens in `connected_accounts`
+- provider accounts may use different emails/usernames than the HumanTouch user; this is expected and allowed
+- frontend integration proxy routes must support both NextAuth users and local `humantouch_session` cookie users
+- root `.env` is the source of truth for auth/provider secrets; `frontend/.env.local` should only keep frontend-local values like `NEXT_PUBLIC_API_BASE_URL` and `AUTH_URL`
 
 ## Current Non-Goals
 

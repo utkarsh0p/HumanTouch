@@ -7,7 +7,13 @@ import {
   createGmailReadMessageTool,
   createGmailSearchMessagesTool,
   createGmailSendDraftTool,
-} from "./gmail.js";
+} from "./google/gmail.js";
+import {
+  createGitHubCreateIssueTool,
+  createGitHubGetRepoTool,
+  createGitHubListReposTool,
+  createGitHubSearchIssuesTool,
+} from "./github/github.js";
 import { webSearchTool } from "./web-search.js";
 
 export type ToolId =
@@ -15,8 +21,12 @@ export type ToolId =
   | "gmail_create_draft"
   | "gmail_send_draft"
   | "gmail_search_messages"
-  | "gmail_read_message";
-export type ToolCategory = "research" | "company_data" | "ticketing" | "email" | "admin";
+  | "gmail_read_message"
+  | "github_list_repos"
+  | "github_get_repo"
+  | "github_search_issues"
+  | "github_create_issue";
+export type ToolCategory = "research" | "company_data" | "ticketing" | "email" | "developer" | "admin";
 export type ToolRisk = "low" | "medium" | "high";
 export type ToolRuntimeContext = Pick<WorkflowState, "user" | "session" | "agent" | "runtime">;
 
@@ -84,6 +94,42 @@ const toolRegistry = [
     promptDescription: "Read Gmail message metadata and snippets for the current user's connected Google account.",
     createTool: createGmailReadMessageTool,
   },
+  {
+    id: "github_list_repos",
+    label: "GitHub list repositories",
+    category: "developer",
+    risk: "low",
+    requiresConfig: true,
+    promptDescription: "List repositories visible to the current user's connected GitHub account.",
+    createTool: createGitHubListReposTool,
+  },
+  {
+    id: "github_get_repo",
+    label: "GitHub get repository",
+    category: "developer",
+    risk: "low",
+    requiresConfig: true,
+    promptDescription: "Read repository metadata from the current user's connected GitHub account.",
+    createTool: createGitHubGetRepoTool,
+  },
+  {
+    id: "github_search_issues",
+    label: "GitHub search issues",
+    category: "developer",
+    risk: "low",
+    requiresConfig: true,
+    promptDescription: "Search issues in repositories visible to the current user's connected GitHub account.",
+    createTool: createGitHubSearchIssuesTool,
+  },
+  {
+    id: "github_create_issue",
+    label: "GitHub create issue",
+    category: "developer",
+    risk: "medium",
+    requiresConfig: true,
+    promptDescription: "Create GitHub issues in repositories visible to the current user's connected GitHub account.",
+    createTool: createGitHubCreateIssueTool,
+  },
 ] satisfies ToolDefinition[];
 
 function isToolConfigured(definition: ToolDefinition): boolean {
@@ -95,6 +141,14 @@ function isToolConfigured(definition: ToolDefinition): boolean {
     return Boolean(
       settings.googleOAuth.clientId &&
         settings.googleOAuth.clientSecret &&
+        settings.tokenEncryptionKey,
+    );
+  }
+
+  if (definition.category === "developer") {
+    return Boolean(
+      settings.githubOAuth.clientId &&
+        settings.githubOAuth.clientSecret &&
         settings.tokenEncryptionKey,
     );
   }

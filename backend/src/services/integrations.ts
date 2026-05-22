@@ -432,7 +432,9 @@ export async function getConnectedAccountCredentials(input: {
 
   const missingScopes = input.requiredScopes.filter((scope) => !account.scopes.includes(scope));
   if (missingScopes.length > 0) {
-    throw new Error(`Google account is missing required Gmail scope(s): ${missingScopes.join(", ")}.`);
+    throw new Error(
+      `${input.provider} account is missing required OAuth scope(s): ${missingScopes.join(", ")}. Reconnect ${input.provider} with the required permissions.`,
+    );
   }
 
   let accessToken = decryptToken(account.encryptedAccessToken);

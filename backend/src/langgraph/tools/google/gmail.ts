@@ -1,8 +1,8 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-import { getGoogleConnectedAccountCredentials } from "../../services/integrations.js";
-import type { WorkflowState } from "../state.js";
+import { getGoogleConnectedAccountCredentials } from "../../../services/integrations.js";
+import type { WorkflowState } from "../../state.js";
 
 const GMAIL_API_BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";

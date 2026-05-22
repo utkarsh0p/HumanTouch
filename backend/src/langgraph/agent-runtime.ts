@@ -107,6 +107,26 @@ export function buildRuntimePrompt(state: WorkflowState): string {
     );
   }
 
+  if (
+    hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "github_list_repos") ||
+    hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "github_get_repo") ||
+    hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "github_search_issues")
+  ) {
+    promptParts.push(
+      "",
+      "GitHub access:",
+      "Use GitHub read tools to inspect repositories and issues visible to the current user's connected GitHub account.",
+      "Search existing issues before suggesting that a new issue should be created.",
+    );
+  }
+
+  if (hasConfiguredTool(state.agent.agentInfo.allowed_tool_ids, "github_create_issue")) {
+    promptParts.push(
+      "Use github_create_issue only when the user explicitly asks to create, open, or file a GitHub issue.",
+      "After creating an issue, include the issue number and URL from the tool result.",
+    );
+  }
+
   if (state.session.userPrompt?.trim()) {
     promptParts.push("", "User style preferences:", state.session.userPrompt.trim());
   }

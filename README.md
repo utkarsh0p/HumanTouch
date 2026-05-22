@@ -270,6 +270,21 @@ The backend stores tool-integration access and refresh tokens encrypted in
 `humantouch.connected_accounts`. The frontend only receives connection status
 and provider email, never raw provider tokens.
 
+The current product model treats the HumanTouch user as the owner of each
+provider connection. The external provider account can be a different identity
+from the HumanTouch login email. For example, HumanTouch user
+`utkarshsingh@gmail.com` can connect Google account `utkarshsingh2k6@gmail.com`
+and GitHub account `utkarsh0p`; tools act through the connected provider
+account, while access control remains scoped to the HumanTouch user.
+
+The provider menu should make this explicit:
+
+- show the current HumanTouch user email
+- show connected providers as `Connected as <provider email/account id>`
+- use the provider toggle as the source of connection state
+- off/not connected starts OAuth connect
+- on/connected calls `POST /api/integrations/:provider/disconnect` and clears stored tokens
+
 ## Database Access
 
 HumanTouch product data now uses Prisma for normal CRUD.
