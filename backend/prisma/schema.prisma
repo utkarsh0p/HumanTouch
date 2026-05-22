@@ -68,7 +68,7 @@ model ConnectedAccount {
   userId                String    @map("user_id") @db.Uuid
   provider              String
   providerAccountId     String    @map("provider_account_id")
-  providerEmail         String    @map("provider_email")
+  providerEmail         String?   @map("provider_email")
   encryptedAccessToken  String?   @map("encrypted_access_token")
   encryptedRefreshToken String?   @map("encrypted_refresh_token")
   scopes                String[]

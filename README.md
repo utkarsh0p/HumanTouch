@@ -37,8 +37,18 @@ The canonical data-model reference is in `SCHEMA.md`.
 
 ## Local setup
 
-1. Copy values into `.env` at the repo root.
-2. Start the backend:
+1. Copy backend values into `.env` at the repo root.
+2. Copy frontend auth values into `frontend/.env.local`. NextAuth loads env from the frontend app directory:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+AUTH_SECRET=
+AUTH_URL=http://localhost:3000
+AUTH_GOOGLE_ID=
+AUTH_GOOGLE_SECRET=
+```
+
+3. Start the backend:
 
 ```bash
 cd backend
@@ -46,7 +56,7 @@ pnpm install
 pnpm dev
 ```
 
-3. Start the frontend:
+4. Start the frontend:
 
 ```bash
 cd frontend
@@ -95,11 +105,20 @@ PORT=3001
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 FRONTEND_BASE_URL=http://localhost:3000
+AUTH_SECRET=
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
-GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001/api/integrations/google/callback
 GOOGLE_OAUTH_SCOPES=openid,email,profile,https://www.googleapis.com/auth/gmail.compose,https://www.googleapis.com/auth/gmail.readonly
 TOKEN_ENCRYPTION_KEY=
+LINKEDIN_CLIENT_ID=
+LINKEDIN_CLIENT_SECRET=
+LINKEDIN_REDIRECT_URI=http://localhost:3001/api/integrations/linkedin/callback
+LINKEDIN_SCOPES=openid,profile,email
+META_CLIENT_ID=
+META_CLIENT_SECRET=
+META_REDIRECT_URI=http://localhost:3001/api/integrations/meta/callback
+META_SCOPES=email,public_profile
 ```
 
 ## Current Backend Scope
@@ -186,12 +205,13 @@ Current transition status:
 
 ## Auth
 
-The backend now supports basic local auth with:
+The backend supports local auth and a NextAuth sync bridge with:
 
 - `POST /api/auth/signup`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+- `POST /api/auth/nextauth/sync`
 
 Behavior:
 
@@ -212,19 +232,37 @@ Example:
 curl -H "x-dev-user-email: utkarshsingh@gmail.com" http://localhost:3001/api/agents
 ```
 
-## Google OAuth Login and Integrations
+## NextAuth Login and Tool Integrations
 
-Google OAuth is the primary login/signup path and also stores connected-account
-tokens for future tools. The current routes are:
+Google login/signup is handled by NextAuth in the frontend app. Register this
+login callback on the Google OAuth client used by `AUTH_GOOGLE_ID` and
+`AUTH_GOOGLE_SECRET`:
 
-- `GET /api/auth/providers`
-- `GET /api/auth/google/start`
-- `GET /api/auth/google/callback`
+```text
+http://localhost:3000/api/auth/callback/google
+```
+
+The backend does not own the Google login OAuth redirect. NextAuth signs in the
+user and calls the backend sync route so HumanTouch can create or update its
+local user row.
+
+Tool integrations are separate from login OAuth. They store connected-account
+tokens for future agent tools in the backend database. The current auth and
+integration routes are:
+
+- `POST /api/auth/nextauth/sync`
 - `GET /api/integrations`
 - `POST /api/integrations/google/disconnect`
 - `GET /api/tools`
 
-The backend stores Google access and refresh tokens encrypted in
+For tool integrations, register this backend callback on the Google OAuth client
+used by `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`:
+
+```text
+http://localhost:3001/api/integrations/google/callback
+```
+
+The backend stores tool-integration access and refresh tokens encrypted in
 `humantouch.connected_accounts`. The frontend only receives connection status
 and provider email, never raw Google tokens.
 

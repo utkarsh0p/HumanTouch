@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 
+import { settings } from "../config.js";
 import { prisma } from "../db/prisma.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import { decryptToken, encryptToken } from "./token-encryption.js";
 
-const GOOGLE_PROVIDER = "google";
+const ACCESS_TOKEN_EXPIRY_SKEW_MS = 60 * 1000;
 
-type GoogleTokenResponse = {
+export type IntegrationProvider = "google" | "linkedin" | "meta";
+
+type OAuthTokenResponse = {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
@@ -17,6 +20,12 @@ type GoogleTokenResponse = {
   error_description?: string;
 };
 
+type ProviderProfile = {
+  id: string;
+  email?: string | null;
+  name?: string | null;
+};
+
 type GoogleUserInfoResponse = {
   sub?: string;
   email?: string;
@@ -24,11 +33,23 @@ type GoogleUserInfoResponse = {
   name?: string;
 };
 
+type TokenRefreshInput = {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+};
+
+type ProviderTokenAdapter = {
+  tokenEndpoint: string;
+  refreshAccessToken?: (input: TokenRefreshInput) => Promise<OAuthTokenResponse>;
+  fetchProfile: (accessToken: string) => Promise<ProviderProfile>;
+};
+
 export type IntegrationAccountSummary = {
   id: string;
   provider: string;
   provider_account_id: string;
-  provider_email: string;
+  provider_email: string | null;
   scopes: string[];
   status: string;
   expires_at: string | null;
@@ -36,17 +57,112 @@ export type IntegrationAccountSummary = {
   updated_at: string;
 };
 
-export type GoogleConnectedAccountCredentials = {
+export type ConnectedAccountCredentials = {
   accessToken: string;
   scopes: string[];
   providerEmail: string;
 };
 
+function parseScopes(scope: string | undefined, fallback: string[] = []): string[] {
+  return scope
+    ?.split(" ")
+    .map((item) => item.trim())
+    .filter(Boolean) ?? fallback;
+}
+
+function expiresAtFromSeconds(expiresIn: number | undefined): Date | null {
+  return expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+}
+
+async function refreshWithStandardOAuthTokenEndpoint(input: {
+  tokenEndpoint: string;
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}): Promise<OAuthTokenResponse> {
+  const response = await fetch(input.tokenEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+      refresh_token: input.refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  const payload = (await response.json()) as OAuthTokenResponse;
+  if (!response.ok) {
+    throw new Error(payload.error_description ?? payload.error ?? "OAuth token refresh failed.");
+  }
+
+  return payload;
+}
+
+const providerTokenAdapters: Record<IntegrationProvider, ProviderTokenAdapter> = {
+  google: {
+    tokenEndpoint: "https://oauth2.googleapis.com/token",
+    refreshAccessToken: (input) =>
+      refreshWithStandardOAuthTokenEndpoint({
+        tokenEndpoint: "https://oauth2.googleapis.com/token",
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+        refreshToken: input.refreshToken,
+      }),
+    fetchProfile: async (accessToken) => {
+      const googleUser = await fetchGoogleUserInfo(accessToken);
+      if (!googleUser.sub) {
+        throw new Error("Google account profile did not include an id.");
+      }
+
+      return {
+        id: googleUser.sub,
+        email: googleUser.email?.toLowerCase() ?? null,
+        name: googleUser.name ?? null,
+      };
+    },
+  },
+  linkedin: {
+    tokenEndpoint: "https://www.linkedin.com/oauth/v2/accessToken",
+    refreshAccessToken: (input) =>
+      refreshWithStandardOAuthTokenEndpoint({
+        tokenEndpoint: "https://www.linkedin.com/oauth/v2/accessToken",
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+        refreshToken: input.refreshToken,
+      }),
+    fetchProfile: async () => {
+      throw new Error("LinkedIn OAuth profile sync is not implemented yet.");
+    },
+  },
+  meta: {
+    tokenEndpoint: "https://graph.facebook.com/v20.0/oauth/access_token",
+    fetchProfile: async () => {
+      throw new Error("Meta OAuth profile sync is not implemented yet.");
+    },
+  },
+};
+
+function providerOAuthConfig(provider: IntegrationProvider): {
+  clientId?: string;
+  clientSecret?: string;
+} {
+  if (provider === "google") {
+    return settings.googleOAuth;
+  }
+  if (provider === "linkedin") {
+    return settings.linkedinOAuth;
+  }
+  return settings.metaOAuth;
+}
+
 function toSummary(account: {
   id: string;
   provider: string;
   providerAccountId: string;
-  providerEmail: string;
+  providerEmail: string | null;
   scopes: string[];
   status: string;
   expiresAt: Date | null;
@@ -85,8 +201,21 @@ export async function exchangeGoogleAuthorizationCode(input: {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-}): Promise<GoogleTokenResponse> {
-  const response = await fetch("https://oauth2.googleapis.com/token", {
+}): Promise<OAuthTokenResponse> {
+  return exchangeProviderAuthorizationCode("google", input);
+}
+
+export async function exchangeProviderAuthorizationCode(
+  provider: IntegrationProvider,
+  input: {
+    code: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+  },
+): Promise<OAuthTokenResponse> {
+  const adapter = providerTokenAdapters[provider];
+  const response = await fetch(adapter.tokenEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -100,9 +229,9 @@ export async function exchangeGoogleAuthorizationCode(input: {
     }),
   });
 
-  const payload = (await response.json()) as GoogleTokenResponse;
+  const payload = (await response.json()) as OAuthTokenResponse;
   if (!response.ok) {
-    throw new Error(payload.error_description ?? payload.error ?? "Google token exchange failed.");
+    throw new Error(payload.error_description ?? payload.error ?? `${provider} token exchange failed.`);
   }
 
   return payload;
@@ -125,34 +254,54 @@ export async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUs
 
 export async function saveGoogleConnectedAccount(input: {
   user: AuthenticatedUser;
-  tokenResponse: GoogleTokenResponse;
+  tokenResponse: OAuthTokenResponse;
   googleUser: GoogleUserInfoResponse;
 }): Promise<IntegrationAccountSummary> {
-  if (!input.tokenResponse.access_token) {
-    throw new Error("Google did not return an access token.");
+  if (!input.googleUser.sub) {
+    throw new Error("Google account profile did not include an id.");
   }
-  if (!input.googleUser.sub || !input.googleUser.email) {
-    throw new Error("Google account profile did not include an id and email.");
+
+  return saveConnectedAccount({
+    user: input.user,
+    provider: "google",
+    tokenResponse: input.tokenResponse,
+    profile: {
+      id: input.googleUser.sub,
+      email: input.googleUser.email?.toLowerCase() ?? null,
+      name: input.googleUser.name ?? null,
+    },
+  });
+}
+
+export async function fetchProviderProfile(
+  provider: IntegrationProvider,
+  accessToken: string,
+): Promise<ProviderProfile> {
+  return providerTokenAdapters[provider].fetchProfile(accessToken);
+}
+
+export async function saveConnectedAccount(input: {
+  user: AuthenticatedUser;
+  provider: IntegrationProvider;
+  tokenResponse: OAuthTokenResponse;
+  profile: ProviderProfile;
+}): Promise<IntegrationAccountSummary> {
+  if (!input.tokenResponse.access_token) {
+    throw new Error(`${input.provider} did not return an access token.`);
   }
 
   const existingAccount = await prisma.connectedAccount.findUnique({
     where: {
       userId_provider_providerAccountId: {
         userId: input.user.id,
-        provider: GOOGLE_PROVIDER,
-        providerAccountId: input.googleUser.sub,
+        provider: input.provider,
+        providerAccountId: input.profile.id,
       },
     },
   });
 
-  const scopes =
-    input.tokenResponse.scope
-      ?.split(" ")
-      .map((scope) => scope.trim())
-      .filter(Boolean) ?? [];
-  const expiresAt = input.tokenResponse.expires_in
-    ? new Date(Date.now() + input.tokenResponse.expires_in * 1000)
-    : null;
+  const scopes = parseScopes(input.tokenResponse.scope);
+  const expiresAt = expiresAtFromSeconds(input.tokenResponse.expires_in);
   const encryptedRefreshToken =
     encryptToken(input.tokenResponse.refresh_token) ??
     existingAccount?.encryptedRefreshToken ??
@@ -162,17 +311,17 @@ export async function saveGoogleConnectedAccount(input: {
     where: {
       userId_provider_providerAccountId: {
         userId: input.user.id,
-        provider: GOOGLE_PROVIDER,
-        providerAccountId: input.googleUser.sub,
+        provider: input.provider,
+        providerAccountId: input.profile.id,
       },
     },
     create: {
       id: randomUUID(),
       companyId: input.user.company_id,
       userId: input.user.id,
-      provider: GOOGLE_PROVIDER,
-      providerAccountId: input.googleUser.sub,
-      providerEmail: input.googleUser.email.toLowerCase(),
+      provider: input.provider,
+      providerAccountId: input.profile.id,
+      providerEmail: input.profile.email?.toLowerCase() ?? null,
       encryptedAccessToken: encryptToken(input.tokenResponse.access_token),
       encryptedRefreshToken,
       scopes,
@@ -181,7 +330,7 @@ export async function saveGoogleConnectedAccount(input: {
     },
     update: {
       companyId: input.user.company_id,
-      providerEmail: input.googleUser.email.toLowerCase(),
+      providerEmail: input.profile.email?.toLowerCase() ?? null,
       encryptedAccessToken: encryptToken(input.tokenResponse.access_token),
       encryptedRefreshToken,
       scopes,
@@ -194,23 +343,24 @@ export async function saveGoogleConnectedAccount(input: {
   return toSummary(account);
 }
 
-export async function getGoogleConnectedAccountCredentials(input: {
+export async function getConnectedAccountCredentials(input: {
+  provider: IntegrationProvider;
   userId: string;
   companyId: string;
   requiredScopes: string[];
-}): Promise<GoogleConnectedAccountCredentials> {
+}): Promise<ConnectedAccountCredentials> {
   const account = await prisma.connectedAccount.findFirst({
     where: {
       companyId: input.companyId,
       userId: input.userId,
-      provider: GOOGLE_PROVIDER,
+      provider: input.provider,
       status: "connected",
     },
     orderBy: { updatedAt: "desc" },
   });
 
   if (!account?.encryptedAccessToken) {
-    throw new Error("Google account is not connected. Connect Google OAuth before using Gmail tools.");
+    throw new Error(`${input.provider} account is not connected. Connect ${input.provider} before using its tools.`);
   }
 
   const missingScopes = input.requiredScopes.filter((scope) => !account.scopes.includes(scope));
@@ -218,28 +368,80 @@ export async function getGoogleConnectedAccountCredentials(input: {
     throw new Error(`Google account is missing required Gmail scope(s): ${missingScopes.join(", ")}.`);
   }
 
-  if (account.expiresAt && account.expiresAt.getTime() <= Date.now()) {
-    throw new Error("Google access token is expired. Reconnect Google OAuth before using Gmail tools.");
+  let accessToken = decryptToken(account.encryptedAccessToken);
+  if (!accessToken) {
+    throw new Error(`${input.provider} access token is unavailable. Reconnect ${input.provider} before using its tools.`);
   }
 
-  const accessToken = decryptToken(account.encryptedAccessToken);
-  if (!accessToken) {
-    throw new Error("Google access token is unavailable. Reconnect Google OAuth before using Gmail tools.");
+  if (account.expiresAt && account.expiresAt.getTime() <= Date.now() + ACCESS_TOKEN_EXPIRY_SKEW_MS) {
+    const refreshToken = decryptToken(account.encryptedRefreshToken);
+    if (!refreshToken) {
+      throw new Error(`${input.provider} access token is expired and no refresh token is available. Reconnect ${input.provider} before using its tools.`);
+    }
+
+    const adapter = providerTokenAdapters[input.provider];
+    if (!adapter.refreshAccessToken) {
+      throw new Error(`${input.provider} access token is expired and automatic refresh is not supported yet. Reconnect ${input.provider} before using its tools.`);
+    }
+
+    const config = providerOAuthConfig(input.provider);
+    if (!config.clientId || !config.clientSecret) {
+      throw new Error(`${input.provider} OAuth client id and secret are not configured.`);
+    }
+
+    const refreshedToken = await adapter.refreshAccessToken({
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      refreshToken,
+    });
+    if (!refreshedToken.access_token) {
+      throw new Error(`${input.provider} did not return a refreshed access token. Reconnect ${input.provider} before using its tools.`);
+    }
+
+    const refreshedScopes = parseScopes(refreshedToken.scope, account.scopes);
+    const refreshedExpiresAt = expiresAtFromSeconds(refreshedToken.expires_in);
+
+    await prisma.connectedAccount.update({
+      where: { id: account.id },
+      data: {
+        encryptedAccessToken: encryptToken(refreshedToken.access_token),
+        scopes: refreshedScopes,
+        expiresAt: refreshedExpiresAt,
+        status: "connected",
+        updatedAt: new Date(),
+      },
+    });
+
+    accessToken = refreshedToken.access_token;
   }
 
   return {
     accessToken,
     scopes: account.scopes,
-    providerEmail: account.providerEmail,
+    providerEmail: account.providerEmail ?? "",
   };
 }
 
-export async function disconnectGoogleAccount(user: AuthenticatedUser): Promise<void> {
+export async function getGoogleConnectedAccountCredentials(input: {
+  userId: string;
+  companyId: string;
+  requiredScopes: string[];
+}): Promise<ConnectedAccountCredentials> {
+  return getConnectedAccountCredentials({
+    provider: "google",
+    ...input,
+  });
+}
+
+export async function disconnectConnectedAccount(
+  user: AuthenticatedUser,
+  provider: string,
+): Promise<void> {
   await prisma.connectedAccount.updateMany({
     where: {
       companyId: user.company_id,
       userId: user.id,
-      provider: GOOGLE_PROVIDER,
+      provider,
     },
     data: {
       encryptedAccessToken: null,
@@ -248,4 +450,8 @@ export async function disconnectGoogleAccount(user: AuthenticatedUser): Promise<
       updatedAt: new Date(),
     },
   });
+}
+
+export async function disconnectGoogleAccount(user: AuthenticatedUser): Promise<void> {
+  await disconnectConnectedAccount(user, "google");
 }

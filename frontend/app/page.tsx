@@ -4,7 +4,10 @@ import { Fragment, type FormEvent, type ReactNode, useEffect, useRef, useState }
 import {
   ArrowUp,
   Bot,
+  Cable,
   ChevronDown,
+  CircleAlert,
+  CircleCheck,
   LogOut,
   MoreHorizontal,
   PanelLeftClose,
@@ -17,6 +20,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 import { AuthSwitch } from "@/components/ui/auth-switch";
 import { Button } from "@/components/ui/button";
@@ -86,12 +90,29 @@ type AuthenticatedUser = {
   is_admin: boolean;
 };
 
-type AuthProvidersResponse = {
-  google: {
-    configured: boolean;
-    missing: string[];
-    scopes: string[];
-  };
+type IntegrationProviderKey = "google" | "linkedin" | "meta";
+
+type IntegrationProviderSummary = {
+  configured: boolean;
+  missing: string[];
+  scopes: string[];
+};
+
+type IntegrationAccount = {
+  id: string;
+  provider: string;
+  provider_account_id: string;
+  provider_email: string | null;
+  scopes: string[];
+  status: string;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type IntegrationsResponse = {
+  providers: Record<IntegrationProviderKey, IntegrationProviderSummary>;
+  accounts: IntegrationAccount[];
 };
 
 type ToolCatalogEntry = {
@@ -277,6 +298,8 @@ function renderAssistantMarkdown(content: string): ReactNode {
 }
 
 export default function HomePage() {
+  const { data: authSession, status: authSessionStatus } = useSession();
+  const authSessionEmail = authSession?.user?.email ?? null;
   const [agentFormMode, setAgentFormMode] = useState<"create" | "edit">("create");
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -314,21 +337,18 @@ export default function HomePage() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [archivingAgentId, setArchivingAgentId] = useState<string | null>(null);
   const [pendingArchiveAgent, setPendingArchiveAgent] = useState<Agent | null>(null);
-  const [googleAuthConfig, setGoogleAuthConfig] = useState<{
-    configured: boolean;
-    missing: string[];
-  }>({ configured: false, missing: [] });
+  const [integrations, setIntegrations] = useState<IntegrationsResponse | null>(null);
+  const [isIntegrationMenuOpen, setIsIntegrationMenuOpen] = useState(false);
+  const [integrationNotice, setIntegrationNotice] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  const integrationMenuRef = useRef<HTMLDivElement | null>(null);
   const sessionMenuRef = useRef<HTMLDivElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
-    void loadAuthProviders();
-    void loadCurrentUser();
-
     const params = new URLSearchParams(window.location.search);
     const authProvider = params.get("auth");
     const authStatus = params.get("auth_status");
@@ -351,7 +371,46 @@ export default function HomePage() {
         `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
       );
     }
+
+    const integrationProvider = params.get("integration");
+    const integrationStatus = params.get("integration_status");
+    if (integrationProvider && integrationStatus) {
+      const integrationDetail = params.get("integration_detail");
+      setIntegrationNotice(
+        integrationStatus === "connected"
+          ? `${integrationProvider} connected.`
+          : integrationDetail
+            ? `${integrationProvider} connection failed: ${integrationDetail}`
+            : `${integrationProvider} connection failed.`,
+      );
+      params.delete("integration");
+      params.delete("integration_status");
+      params.delete("integration_detail");
+      const nextSearch = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
+      );
+    }
   }, []);
+
+  useEffect(() => {
+    if (authSessionStatus === "loading") {
+      setIsAuthLoading(true);
+      return;
+    }
+
+    if (authSessionStatus === "unauthenticated") {
+      setCurrentUser(null);
+      setIsAuthLoading(false);
+      return;
+    }
+
+    if (authSessionEmail) {
+      void loadCurrentUser(authSessionEmail);
+    }
+  }, [authSessionEmail, authSessionStatus]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -361,6 +420,7 @@ export default function HomePage() {
     }
 
     void loadWorkspace();
+    void loadIntegrations();
   }, [currentUser]);
 
   useEffect(() => {
@@ -421,6 +481,21 @@ export default function HomePage() {
   }, [openSessionMenuId]);
 
   useEffect(() => {
+    if (!isIntegrationMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!integrationMenuRef.current?.contains(event.target as Node)) {
+        setIsIntegrationMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isIntegrationMenuOpen]);
+
+  useEffect(() => {
     if (!activeThreadId || !transcriptRef.current) {
       return;
     }
@@ -447,6 +522,9 @@ export default function HomePage() {
     setPendingDeleteSession(null);
     setEditingAgentId(null);
     setPendingArchiveAgent(null);
+    setIntegrations(null);
+    setIsIntegrationMenuOpen(false);
+    setIntegrationNotice(null);
     setAuthNotice(null);
     resetCreateAgentForm();
   }
@@ -543,6 +621,7 @@ export default function HomePage() {
       credentials: "include",
       headers: {
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(authSessionEmail ? { "x-auth-user-email": authSessionEmail } : {}),
         ...(init?.headers ?? {}),
       },
       cache: init?.cache ?? "no-store",
@@ -565,12 +644,15 @@ export default function HomePage() {
     }
   }
 
-  async function loadCurrentUser() {
+  async function loadCurrentUser(sessionEmail = authSessionEmail) {
     setIsAuthLoading(true);
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
         credentials: "include",
+        headers: {
+          ...(sessionEmail ? { "x-auth-user-email": sessionEmail } : {}),
+        },
         cache: "no-store",
       });
 
@@ -595,27 +677,6 @@ export default function HomePage() {
     }
   }
 
-  async function loadAuthProviders() {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/auth/providers`, {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        setGoogleAuthConfig({ configured: false, missing: [] });
-        return;
-      }
-
-      const data = (await response.json()) as AuthProvidersResponse;
-      setGoogleAuthConfig({
-        configured: data.google.configured,
-        missing: data.google.missing ?? [],
-      });
-    } catch {
-      setGoogleAuthConfig({ configured: false, missing: [] });
-    }
-  }
-
   async function loadWorkspace() {
     setError(null);
     await Promise.all([
@@ -637,6 +698,23 @@ export default function HomePage() {
       setToolCatalog(data);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load tools.");
+    }
+  }
+
+  async function loadIntegrations() {
+    try {
+      const response = await apiFetch("/api/integrations");
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Failed to load connected accounts."));
+      }
+
+      const data = (await response.json()) as IntegrationsResponse;
+      setIntegrations(data);
+    } catch (loadError) {
+      setIntegrationNotice(
+        loadError instanceof Error ? loadError.message : "Failed to load connected accounts.",
+      );
     }
   }
 
@@ -779,6 +857,7 @@ export default function HomePage() {
         method: "POST",
         credentials: "include",
       });
+      await signOut({ callbackUrl: "/" });
     } finally {
       setCurrentUser(null);
       setError(null);
@@ -787,15 +866,23 @@ export default function HomePage() {
   }
 
   function handleGoogleAuth() {
-    if (!googleAuthConfig.configured) {
-      const missing = googleAuthConfig.missing.length
-        ? googleAuthConfig.missing.join(", ")
-        : "Google OAuth environment variables";
-      setAuthNotice(`Google OAuth is implemented but not configured locally. Missing: ${missing}.`);
+    void signIn("google", { callbackUrl: "/" });
+  }
+
+  function handleIntegrationConnect(provider: IntegrationProviderKey) {
+    const providerSummary = integrations?.providers[provider];
+    const providerLabel = provider === "meta" ? "Meta" : provider[0].toUpperCase() + provider.slice(1);
+
+    if (!providerSummary?.configured) {
+      const missing = providerSummary?.missing.length
+        ? providerSummary.missing.join(", ")
+        : `${providerLabel} credentials`;
+      setIntegrationNotice(`${providerLabel} connection is not configured. Missing: ${missing}.`);
+      setIsIntegrationMenuOpen(false);
       return;
     }
 
-    window.location.href = `${apiBaseUrl}/api/auth/google/start`;
+    window.location.href = `/api/integrations/${provider}/connect`;
   }
 
   async function createSession(agentId?: string) {
@@ -1268,8 +1355,7 @@ export default function HomePage() {
   if (!currentUser) {
     return (
       <AuthSwitch
-        googleConfigured={googleAuthConfig.configured}
-        googleMissing={googleAuthConfig.missing}
+        googleConfigured
         isLoading={isAuthSubmitting}
         notice={authNotice}
         onGoogleLogin={handleGoogleAuth}
@@ -1319,6 +1405,29 @@ export default function HomePage() {
     medium: "border-[#7a6a45] text-[#d2bd7a]",
     high: "border-[#83534a] text-[#e29c8e]",
   };
+  const integrationOptions: Array<{
+    provider: IntegrationProviderKey;
+    label: string;
+  }> = [
+    { provider: "google", label: "Google" },
+    { provider: "linkedin", label: "LinkedIn" },
+    { provider: "meta", label: "Meta" },
+  ];
+
+  function integrationStatus(provider: IntegrationProviderKey): "connected" | "missing" | "available" {
+    const providerSummary = integrations?.providers[provider];
+    const isConnected = integrations?.accounts.some(
+      (account) => account.provider === provider && account.status === "connected",
+    );
+
+    if (isConnected) {
+      return "connected";
+    }
+    if (!providerSummary?.configured) {
+      return "missing";
+    }
+    return "available";
+  }
 
   function renderComposer(className?: string) {
     return (
@@ -1377,6 +1486,54 @@ export default function HomePage() {
                   <Plus className="size-4" />
                 </label>
               </PromptInputAction>
+              <div className="relative" ref={integrationMenuRef}>
+                <PromptInputAction tooltip="Connect accounts">
+                  <button
+                    className="flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/6"
+                    onClick={() => {
+                      setIsIntegrationMenuOpen((current) => !current);
+                      setIntegrationNotice(null);
+                    }}
+                    type="button"
+                  >
+                    <Cable className="size-4" />
+                  </button>
+                </PromptInputAction>
+                {isIntegrationMenuOpen ? (
+                  <div className="absolute bottom-10 left-0 z-30 w-64 rounded-2xl border border-white/10 bg-[#211f1b] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]">
+                    {integrationOptions.map((option) => {
+                      const status = integrationStatus(option.provider);
+                      const statusLabel =
+                        status === "connected"
+                          ? "connected"
+                          : status === "missing"
+                            ? "config missing"
+                            : "not connected";
+
+                      return (
+                        <button
+                          key={option.provider}
+                          className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-[#ddd5c8] transition hover:bg-white/6"
+                          onClick={() => handleIntegrationConnect(option.provider)}
+                          type="button"
+                        >
+                          <span>{option.label}</span>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-[#9f9788]">
+                            {status === "connected" ? (
+                              <CircleCheck className="size-3.5 text-[#a8c8a6]" />
+                            ) : status === "missing" ? (
+                              <CircleAlert className="size-3.5 text-[#d2bd7a]" />
+                            ) : (
+                              <Cable className="size-3.5" />
+                            )}
+                            {statusLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
               <span className="truncate">{activeAgent?.name ?? (activeSession ? "Archived agent" : "No agent selected")}</span>
             </div>
 
@@ -1403,6 +1560,9 @@ export default function HomePage() {
           </PromptInputActions>
         </PromptInput>
         {error ? <div className="mt-3 text-sm text-[#d97757]">{error}</div> : null}
+        {integrationNotice ? (
+          <div className="mt-3 text-sm text-[#d6b574]">{integrationNotice}</div>
+        ) : null}
       </div>
     );
   }

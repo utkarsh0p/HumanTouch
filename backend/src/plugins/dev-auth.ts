@@ -20,6 +20,22 @@ async function resolveRequestUser(request: FastifyRequest): Promise<Authenticate
     return sessionUser;
   }
 
+  const authHeaderValue = request.headers["x-auth-user-email"];
+  const authEmail =
+    typeof authHeaderValue === "string"
+      ? authHeaderValue
+      : Array.isArray(authHeaderValue)
+        ? authHeaderValue[0]
+        : null;
+
+  if (authEmail) {
+    const user = await getUserByEmail(authEmail);
+    if (!user) {
+      throw new Error(`Authenticated user not found for email: ${authEmail}`);
+    }
+    return user;
+  }
+
   const headerValue = request.headers["x-dev-user-email"];
   const email =
     typeof headerValue === "string"

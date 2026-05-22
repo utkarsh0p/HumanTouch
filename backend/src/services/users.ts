@@ -146,3 +146,20 @@ export async function markUserGoogleAuthenticated(userId: string): Promise<Authe
 
   return toAuthenticatedUser(user);
 }
+
+export async function resolveOrCreateGoogleUser(input: {
+  email: string;
+  full_name?: string | null;
+}): Promise<AuthenticatedUser> {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const existingUser = await getUserByEmail(normalizedEmail);
+  if (existingUser) {
+    return markUserGoogleAuthenticated(existingUser.id);
+  }
+
+  return createGoogleUser({
+    email: normalizedEmail,
+    full_name:
+      input.full_name?.trim() || normalizedEmail.split("@")[0] || normalizedEmail,
+  });
+}

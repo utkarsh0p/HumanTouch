@@ -62,6 +62,17 @@ const envSchema = z
     GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
     GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
     GOOGLE_OAUTH_SCOPES: z.string().optional(),
+    AUTH_SECRET: z.string().optional(),
+    AUTH_GOOGLE_ID: z.string().optional(),
+    AUTH_GOOGLE_SECRET: z.string().optional(),
+    LINKEDIN_CLIENT_ID: z.string().optional(),
+    LINKEDIN_CLIENT_SECRET: z.string().optional(),
+    LINKEDIN_REDIRECT_URI: z.string().url().optional(),
+    LINKEDIN_SCOPES: z.string().optional(),
+    META_CLIENT_ID: z.string().optional(),
+    META_CLIENT_SECRET: z.string().optional(),
+    META_REDIRECT_URI: z.string().url().optional(),
+    META_SCOPES: z.string().optional(),
     TOKEN_ENCRYPTION_KEY: z.string().optional(),
   })
   .transform((env) => {
@@ -93,11 +104,11 @@ const envSchema = z
           .filter(Boolean)[0] ??
         "http://localhost:3000",
       googleOAuth: {
-        clientId: env.GOOGLE_OAUTH_CLIENT_ID,
-        clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+        clientId: env.GOOGLE_OAUTH_CLIENT_ID ?? env.AUTH_GOOGLE_ID,
+        clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET ?? env.AUTH_GOOGLE_SECRET,
         redirectUri:
           env.GOOGLE_OAUTH_REDIRECT_URI ??
-          `http://localhost:${env.PORT}/api/auth/google/callback`,
+          `http://localhost:${env.PORT}/api/integrations/google/callback`,
         scopes:
           env.GOOGLE_OAUTH_SCOPES?.split(",")
             .map((scope) => scope.trim())
@@ -109,6 +120,29 @@ const envSchema = z
             "https://www.googleapis.com/auth/gmail.readonly",
           ],
       },
+      linkedinOAuth: {
+        clientId: env.LINKEDIN_CLIENT_ID,
+        clientSecret: env.LINKEDIN_CLIENT_SECRET,
+        redirectUri:
+          env.LINKEDIN_REDIRECT_URI ??
+          `http://localhost:${env.PORT}/api/integrations/linkedin/callback`,
+        scopes:
+          env.LINKEDIN_SCOPES?.split(",")
+            .map((scope) => scope.trim())
+            .filter(Boolean) ?? ["openid", "profile", "email"],
+      },
+      metaOAuth: {
+        clientId: env.META_CLIENT_ID,
+        clientSecret: env.META_CLIENT_SECRET,
+        redirectUri:
+          env.META_REDIRECT_URI ??
+          `http://localhost:${env.PORT}/api/integrations/meta/callback`,
+        scopes:
+          env.META_SCOPES?.split(",")
+            .map((scope) => scope.trim())
+            .filter(Boolean) ?? ["email", "public_profile"],
+      },
+      authSecret: env.AUTH_SECRET,
       tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
     };
   });
