@@ -14,6 +14,7 @@ export type AgentInfo = {
   permissions: string;
   guardrails: string;
   work_style: string;
+  allowed_toolkits: string[];
   allowed_tool_ids: string[];
   workspace: AgentWorkspaceInfo;
 };
@@ -43,7 +44,7 @@ export type AgentCreatePayload = {
   purpose: string;
   allowed_tasks: string;
   restrictions: string;
-  allowed_tool_ids?: string[];
+  allowed_toolkits?: string[];
   assigned_role_keys?: string[];
   assigned_user_emails?: string[];
 };

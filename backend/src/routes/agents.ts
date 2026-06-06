@@ -4,12 +4,14 @@ import { z } from "zod";
 import { ensureAdmin, getAccessibleAgents } from "../services/access.js";
 import { archiveAgent, createAgent, updateAgent } from "../services/agents.js";
 
+const allowedToolkitSchema = z.enum(["gmail", "github"]);
+
 const createAgentSchema = z.object({
   name: z.string().trim().min(1),
   purpose: z.string().trim().min(1),
   allowed_tasks: z.string().trim().min(1),
   restrictions: z.string().trim().min(1),
-  allowed_tool_ids: z.array(z.string().trim().min(1)).optional(),
+  allowed_toolkits: z.array(allowedToolkitSchema).default([]),
   assigned_role_keys: z.array(z.string().trim().min(1)).default([]),
   assigned_user_emails: z.array(z.string().trim().email()).default([]),
 });
@@ -18,7 +20,7 @@ const updateAgentSchema = z.object({
   purpose: z.string().trim().min(1),
   allowed_tasks: z.string().trim().min(1),
   restrictions: z.string().trim().min(1),
-  allowed_tool_ids: z.array(z.string().trim().min(1)).optional(),
+  allowed_toolkits: z.array(allowedToolkitSchema).optional(),
   assigned_role_keys: z.array(z.string().trim().min(1)).optional(),
   assigned_user_emails: z.array(z.string().trim().email()).optional(),
 });

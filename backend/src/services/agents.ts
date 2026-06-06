@@ -4,7 +4,6 @@ import type { Prisma } from "@prisma/client";
 import { defaultAdminUserId, defaultCompanyId } from "../constants/seed.js";
 import { prisma } from "../db/prisma.js";
 import { compileAgentSystemPrompt } from "../langgraph/agent-prompt-compiler.js";
-import { validateConfiguredToolIds } from "../langgraph/tools/registry.js";
 import { getUsersByEmails } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type {
@@ -26,6 +25,8 @@ const agentInclude = {
 type AgentWithAssignments = Prisma.AgentGetPayload<{
   include: typeof agentInclude;
 }>;
+
+const supportedToolkits = new Set(["gmail", "github"]);
 
 export function toAgentRecord(agent: AgentWithAssignments): AgentRecord {
   const assignedRoles = [
@@ -78,6 +79,12 @@ function normalizeStringList(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function normalizeToolkitList(values: string[]): string[] {
+  return normalizeStringList(values.map((value) => value.toLowerCase()))
+    .filter((toolkit) => supportedToolkits.has(toolkit))
+    .sort();
+}
+
 function normalizeEmailList(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))];
 }
@@ -117,14 +124,19 @@ function normalizeStoredAgentInfo(value: Prisma.JsonValue, name: string): AgentI
     ),
     work_style: normalizeOptionalText(stored.work_style, "Be clear, concise, and practical."),
   };
-  const storedToolIds =
-    "allowed_tool_ids" in stored && Array.isArray(stored.allowed_tool_ids)
-      ? normalizeStringList(stored.allowed_tool_ids.filter((toolId): toolId is string => typeof toolId === "string"))
+  const storedToolkits =
+    "allowed_toolkits" in stored && Array.isArray(stored.allowed_toolkits)
+      ? normalizeToolkitList(
+          stored.allowed_toolkits.filter(
+            (toolkit): toolkit is string => typeof toolkit === "string",
+          ),
+        )
       : [];
 
   return {
     ...baseInfo,
-    allowed_tool_ids: storedToolIds,
+    allowed_toolkits: storedToolkits,
+    allowed_tool_ids: [],
     workspace: {
       mode: "mode" in workspace && workspace.mode === "agentic" ? "agentic" : "chat",
       objective: normalizeOptionalText(
@@ -180,14 +192,12 @@ function normalizeAgentInfo(payload: AgentCreatePayload): AgentInfo {
     work_style:
       "Be clear, practical, concise, and supportive. Optimize for the assigned employee's workflow.",
   };
-  const allowedToolIds =
-    payload.allowed_tool_ids === undefined
-      ? []
-      : validateConfiguredToolIds(normalizeStringList(payload.allowed_tool_ids));
+  const allowedToolkits = normalizeToolkitList(payload.allowed_toolkits ?? []);
 
   return {
     ...baseInfo,
-    allowed_tool_ids: allowedToolIds,
+    allowed_toolkits: allowedToolkits,
+    allowed_tool_ids: [],
     workspace: {
       mode: "chat",
       objective: purpose || fallbackWorkspaceObjective(name),

@@ -14,8 +14,9 @@ In a near-future phase, the built-in `Admin` agent should be able to coordinate 
 
 - a modular agent backend in `Node.js` + `TypeScript`
 - `Fastify` APIs for session and chat routes
-- `LangGraph.js` for agent workflow orchestration
-- `LangChain JS` + `Google Gemini` for model calls
+- `LangChain JS createAgent` for agent execution
+- `Composio` as the default tool source
+- `Google Gemini` for model calls
 - `PostgreSQL` as the system of record
 - `SSE` for assistant response streaming
 - a frontend that is simple now but leaves room for future multi-agent management
@@ -30,14 +31,14 @@ In a near-future phase, the built-in `Admin` agent should be able to coordinate 
 - per-session `user_prompt` support
 - multiple backend-persisted chat sessions
 - session restore in the UI
-- one main LangGraph workflow that routes into admin and employee subgraphs
-- backend-built runtime state that selects the active agent dynamically
+- one selected-agent runtime that runs every agent through LangChain `createAgent`
+- backend-built runtime context that selects the active agent dynamically
 - future-ready structure for real employee login and multi-company separation
 
 ## Near-Future Direction
 
 - keep the current product centered on direct chat and admin management
-- keep direct chat on the unified workflow entrypoint
+- keep direct chat on the selected-agent `createAgent` runtime
 - extend the built-in `Admin` agent into a coordinator for delegated agent work
 - allow the admin agent to assign work only to agents inside the same company scope
 - keep delegated execution separate from ordinary chat history so future task tracking can evolve cleanly
