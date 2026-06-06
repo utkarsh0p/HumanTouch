@@ -39,6 +39,7 @@ export async function compileAgentSystemPrompt(
             permissions: agentInfo.permissions,
             guardrails: agentInfo.guardrails,
             work_style: agentInfo.work_style,
+            allowed_toolkits: agentInfo.allowed_toolkits,
             workspace: agentInfo.workspace,
           },
           null,

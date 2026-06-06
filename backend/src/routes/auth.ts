@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
-import { settings } from "../config.js";
 import {
   clearAuthCookie,
   createAuthSession,
@@ -14,7 +13,6 @@ import {
   createLocalUser,
   getUserByEmail,
   getUserByEmailWithPasswordHash,
-  resolveOrCreateGoogleUser,
 } from "../services/users.js";
 
 const signupSchema = z.object({
@@ -26,12 +24,6 @@ const signupSchema = z.object({
 const loginSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
   password: z.string().min(1),
-});
-
-const nextAuthSyncSchema = z.object({
-  email: z.string().trim().email().transform((value) => value.toLowerCase()),
-  name: z.string().trim().optional().nullable(),
-  provider: z.literal("google"),
 });
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
@@ -48,18 +40,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         return { user: sessionUser };
       }
 
-      const nextAuthEmailHeader = request.headers["x-auth-user-email"];
-      const nextAuthEmail =
-        typeof nextAuthEmailHeader === "string"
-          ? nextAuthEmailHeader
-          : Array.isArray(nextAuthEmailHeader)
-            ? nextAuthEmailHeader[0]
-            : null;
-
-      if (nextAuthEmail) {
-        return { user: await getUserByEmail(nextAuthEmail) };
-      }
-
       const headerValue = request.headers["x-dev-user-email"];
       const email =
         typeof headerValue === "string"
@@ -73,32 +53,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       return { user: await getUserByEmail(email) };
-    },
-  );
-
-  app.post(
-    "/api/auth/nextauth/sync",
-    {
-      config: {
-        auth: false,
-      },
-    },
-    async (request, reply) => {
-      if (settings.authSecret) {
-        const syncSecret = request.headers["x-nextauth-sync-secret"];
-        if (syncSecret !== settings.authSecret) {
-          reply.code(401);
-          return { detail: "Invalid auth sync secret." };
-        }
-      }
-
-      const payload = nextAuthSyncSchema.parse(request.body);
-      const user = await resolveOrCreateGoogleUser({
-        email: payload.email,
-        full_name: payload.name,
-      });
-
-      return { user };
     },
   );
 

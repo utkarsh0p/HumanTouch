@@ -31,3 +31,19 @@ export type ChatStreamPayload = {
   thread_id: string;
   message: string;
 };
+
+export type AgentProgressStatus =
+  | "pending"
+  | "in-progress"
+  | "completed"
+  | "failed"
+  | "need-help";
+
+export type AgentProgressEvent = {
+  id: string;
+  parent_id?: string;
+  title: string;
+  description?: string;
+  status: AgentProgressStatus;
+  tools?: string[];
+};

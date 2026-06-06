@@ -394,43 +394,6 @@ async function addAuthSessionsTable(): Promise<void> {
   `);
 }
 
-async function addConnectedAccountsTable(): Promise<void> {
-  const appSchema = quoteIdentifier(settings.appSchema);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${appSchema}.connected_accounts (
-      id UUID PRIMARY KEY,
-      company_id UUID NOT NULL REFERENCES ${appSchema}.companies(id) ON DELETE CASCADE,
-      user_id UUID NOT NULL REFERENCES ${appSchema}.users(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL,
-      provider_account_id TEXT NOT NULL,
-      provider_email TEXT NOT NULL,
-      encrypted_access_token TEXT NULL,
-      encrypted_refresh_token TEXT NULL,
-      scopes TEXT[] NOT NULL,
-      expires_at TIMESTAMPTZ NULL,
-      status TEXT NOT NULL DEFAULT 'connected',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS connected_accounts_user_provider_account_key
-    ON ${appSchema}.connected_accounts (user_id, provider, provider_account_id)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS connected_accounts_company_provider_idx
-    ON ${appSchema}.connected_accounts (company_id, provider)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS connected_accounts_user_provider_idx
-    ON ${appSchema}.connected_accounts (user_id, provider)
-  `);
-}
-
 async function updateSeededAdminCredentials(): Promise<void> {
   const appSchema = quoteIdentifier(settings.appSchema);
   const adminPasswordHash = hashPassword("utkarshsingh");
@@ -555,16 +518,10 @@ async function backfillAgents(appSchema: string): Promise<void> {
       guardrails: agent.guardrails,
       work_style: agent.work_style,
     };
-    const existingToolIds =
-      agent.agent_info &&
-      typeof agent.agent_info === "object" &&
-      "allowed_tool_ids" in agent.agent_info &&
-      Array.isArray(agent.agent_info.allowed_tool_ids)
-        ? agent.agent_info.allowed_tool_ids.filter((toolId): toolId is string => typeof toolId === "string")
-        : [];
     const agentInfo: AgentInfo = {
       ...baseInfo,
-      allowed_tool_ids: existingToolIds,
+      allowed_toolkits: [],
+      allowed_tool_ids: [],
       workspace: {
         mode:
           existingWorkspace &&
@@ -740,6 +697,7 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   };
   const agentInfo: AgentInfo = {
     ...baseInfo,
+    allowed_toolkits: [],
     allowed_tool_ids: [],
     workspace: {
       mode: "agentic" as const,
@@ -904,10 +862,6 @@ export async function connectToPostgres(): Promise<void> {
       {
         id: "005_protect_editable_default_admin_agent",
         run: protectEditableDefaultAdminAgent,
-      },
-      {
-        id: "006_connected_accounts",
-        run: addConnectedAccountsTable,
       },
     ]);
   }

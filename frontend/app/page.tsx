@@ -4,11 +4,10 @@ import { Fragment, type FormEvent, type ReactNode, useEffect, useRef, useState }
 import {
   ArrowUp,
   Bot,
-  Cable,
   ChevronDown,
-  CircleAlert,
-  CircleCheck,
+  GitBranch,
   LogOut,
+  Mail,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -20,9 +19,9 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { signIn, signOut, useSession } from "next-auth/react";
 
 import { AuthSwitch } from "@/components/ui/auth-switch";
+import { AgentPlan, type AgentPlanTask } from "@/components/ui/agent-plan";
 import { Button } from "@/components/ui/button";
 import {
   PromptInput,
@@ -55,6 +54,7 @@ type Agent = {
     permissions: string;
     guardrails: string;
     work_style: string;
+    allowed_toolkits: AgentToolkit[];
     allowed_tool_ids: string[];
     workspace: {
       mode: "chat" | "agentic";
@@ -75,10 +75,20 @@ type Agent = {
   assigned_user_emails: string[];
 };
 
+type AgentToolkit = "gmail" | "github";
+
 type ChatMessage = {
+  id: string;
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  run?: AgentRun;
+};
+
+type AgentRun = {
+  status: "running" | "completed" | "failed";
+  tasks: AgentPlanTask[];
+  isExpanded: boolean;
 };
 
 type AuthenticatedUser = {
@@ -90,40 +100,18 @@ type AuthenticatedUser = {
   is_admin: boolean;
 };
 
-type IntegrationProviderKey = "google" | "github" | "linkedin" | "meta";
-
-type IntegrationProviderSummary = {
-  configured: boolean;
-  missing: string[];
-  scopes: string[];
-};
-
-type IntegrationAccount = {
+type AgentProgressEvent = {
   id: string;
-  provider: string;
-  provider_account_id: string;
-  provider_email: string | null;
-  scopes: string[];
-  status: string;
-  expires_at: string | null;
-  created_at: string;
-  updated_at: string;
+  parent_id?: string;
+  title: string;
+  description?: string;
+  status: AgentPlanTask["status"];
+  tools?: string[];
 };
 
-type IntegrationsResponse = {
-  providers: Record<IntegrationProviderKey, IntegrationProviderSummary>;
-  accounts: IntegrationAccount[];
-};
-
-type ToolCatalogEntry = {
-  id: string;
-  label: string;
-  category: "research" | "company_data" | "ticketing" | "email" | "developer" | "admin";
-  risk: "low" | "medium" | "high";
-  requiresConfig: boolean;
-  configured: boolean;
-  promptDescription: string;
-};
+function createMessageId(role: ChatMessage["role"], createdAt: string, index?: number): string {
+  return `${role}:${createdAt}:${index ?? crypto.randomUUID()}`;
+}
 
 function resolveApiBaseUrl(): string {
   const fallback = "http://localhost:3001";
@@ -156,12 +144,89 @@ function resolveApiBaseUrl(): string {
 
 const apiBaseUrl = resolveApiBaseUrl();
 
+const toolkitOptions: Array<{
+  id: AgentToolkit;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "gmail",
+    label: "Gmail",
+    description: "Email search, drafts, and sending through the user's connected Gmail account.",
+  },
+  {
+    id: "github",
+    label: "GitHub",
+    description: "Repository, issue, pull request, and developer workflow actions.",
+  },
+];
+
+function sanitizeLinkTarget(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function renderInlineMarkdown(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   let index = 0;
   let key = 0;
 
   while (index < text.length) {
+    if (text[index] === "[") {
+      const labelEnd = text.indexOf("]", index + 1);
+      if (labelEnd !== -1 && text[labelEnd + 1] === "(") {
+        const urlEnd = text.indexOf(")", labelEnd + 2);
+        if (urlEnd !== -1) {
+          const label = text.slice(index + 1, labelEnd);
+          const href = sanitizeLinkTarget(text.slice(labelEnd + 2, urlEnd));
+          if (href) {
+            nodes.push(
+              <a
+                key={`link-${key++}`}
+                className="text-[#f0b2a7] underline decoration-[#f0b2a7]/40 underline-offset-4 hover:text-[#ffc1b7]"
+                href={href}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {renderInlineMarkdown(label)}
+              </a>,
+            );
+            index = urlEnd + 1;
+            continue;
+          }
+        }
+      }
+    }
+
+    const rawUrlMatch = text.slice(index).match(/^https?:\/\/[^\s<>)]+/);
+    if (rawUrlMatch) {
+      const rawUrl = rawUrlMatch[0].replace(/[.,;:!?]+$/, "");
+      const trailing = rawUrlMatch[0].slice(rawUrl.length);
+      const href = sanitizeLinkTarget(rawUrl);
+      if (href) {
+        nodes.push(
+          <a
+            key={`url-${key++}`}
+            className="break-all text-[#f0b2a7] underline decoration-[#f0b2a7]/40 underline-offset-4 hover:text-[#ffc1b7]"
+            href={href}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {rawUrl}
+          </a>,
+        );
+        if (trailing) {
+          nodes.push(<Fragment key={`url-trailing-${key++}`}>{trailing}</Fragment>);
+        }
+        index += rawUrlMatch[0].length;
+        continue;
+      }
+    }
+
     if (text.startsWith("**", index)) {
       const closingIndex = text.indexOf("**", index + 2);
       if (closingIndex !== -1) {
@@ -203,8 +268,10 @@ function renderInlineMarkdown(text: string): ReactNode[] {
     while (
       nextIndex < text.length &&
       !text.startsWith("**", nextIndex) &&
+      text[nextIndex] !== "[" &&
       text[nextIndex] !== "*" &&
-      text[nextIndex] !== "`"
+      text[nextIndex] !== "`" &&
+      !text.slice(nextIndex).match(/^https?:\/\/[^\s<>)]+/)
     ) {
       nextIndex += 1;
     }
@@ -298,8 +365,6 @@ function renderAssistantMarkdown(content: string): ReactNode {
 }
 
 export default function HomePage() {
-  const { data: authSession, status: authSessionStatus } = useSession();
-  const authSessionEmail = authSession?.user?.email ?? null;
   const [agentFormMode, setAgentFormMode] = useState<"create" | "edit">("create");
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -322,8 +387,7 @@ export default function HomePage() {
   const [agentAllowedTasks, setAgentAllowedTasks] = useState("");
   const [agentRestrictions, setAgentRestrictions] = useState("");
   const [employeeEmailDraft, setEmployeeEmailDraft] = useState("");
-  const [toolCatalog, setToolCatalog] = useState<ToolCatalogEntry[]>([]);
-  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
+  const [selectedToolkits, setSelectedToolkits] = useState<AgentToolkit[]>([]);
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isAgentListOpen, setIsAgentListOpen] = useState(false);
@@ -337,32 +401,17 @@ export default function HomePage() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [archivingAgentId, setArchivingAgentId] = useState<string | null>(null);
   const [pendingArchiveAgent, setPendingArchiveAgent] = useState<Agent | null>(null);
-  const [integrations, setIntegrations] = useState<IntegrationsResponse | null>(null);
-  const [isIntegrationMenuOpen, setIsIntegrationMenuOpen] = useState(false);
-  const [pendingIntegrationProvider, setPendingIntegrationProvider] =
-    useState<IntegrationProviderKey | null>(null);
-  const [integrationNotice, setIntegrationNotice] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
-  const integrationMenuRef = useRef<HTMLDivElement | null>(null);
   const sessionMenuRef = useRef<HTMLDivElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const activeAssistantMessageIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const authProvider = params.get("auth");
-    const authStatus = params.get("auth_status");
-    if (authProvider === "google" && authStatus) {
-      const authDetail = params.get("auth_detail");
-      setAuthNotice(
-        authStatus === "signed_in"
-          ? "Signed in with Google."
-          : authDetail
-            ? `Google sign-in failed: ${authDetail}`
-            : "Google sign-in failed. Check your OAuth configuration and try again.",
-      );
+    if (params.has("auth") || params.has("auth_status") || params.has("auth_detail")) {
       params.delete("auth");
       params.delete("auth_status");
       params.delete("auth_detail");
@@ -373,45 +422,11 @@ export default function HomePage() {
         `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
       );
     }
-
-    const integrationProvider = params.get("integration");
-    const integrationStatus = params.get("integration_status");
-    if (integrationProvider && integrationStatus) {
-      const integrationDetail = params.get("integration_detail");
-      setIntegrationNotice(
-        integrationStatus === "connected"
-          ? `${integrationProvider} connected.`
-          : integrationDetail
-            ? `${integrationProvider} connection failed: ${integrationDetail}`
-            : `${integrationProvider} connection failed.`,
-      );
-      params.delete("integration");
-      params.delete("integration_status");
-      params.delete("integration_detail");
-      const nextSearch = params.toString();
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
-      );
-    }
   }, []);
 
   useEffect(() => {
-    if (authSessionStatus === "loading") {
-      setIsAuthLoading(true);
-      return;
-    }
-
-    if (authSessionStatus === "unauthenticated") {
-      void loadCurrentUser(null);
-      return;
-    }
-
-    if (authSessionEmail) {
-      void loadCurrentUser(authSessionEmail);
-    }
-  }, [authSessionEmail, authSessionStatus]);
+    void loadCurrentUser();
+  }, []);
 
   useEffect(() => {
     if (!currentUser) {
@@ -421,10 +436,11 @@ export default function HomePage() {
     }
 
     void loadWorkspace();
-    void loadIntegrations();
   }, [currentUser]);
 
   useEffect(() => {
+    activeAssistantMessageIdRef.current = null;
+
     if (!currentUser || !activeThreadId) {
       setMessages([]);
       return;
@@ -482,21 +498,6 @@ export default function HomePage() {
   }, [openSessionMenuId]);
 
   useEffect(() => {
-    if (!isIntegrationMenuOpen) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!integrationMenuRef.current?.contains(event.target as Node)) {
-        setIsIntegrationMenuOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [isIntegrationMenuOpen]);
-
-  useEffect(() => {
     if (!activeThreadId || !transcriptRef.current) {
       return;
     }
@@ -510,6 +511,7 @@ export default function HomePage() {
     setSessions([]);
     setActiveThreadId(null);
     setMessages([]);
+    activeAssistantMessageIdRef.current = null;
     setDraft("");
     setFiles([]);
     setIsAgentFormOpen(false);
@@ -523,9 +525,6 @@ export default function HomePage() {
     setPendingDeleteSession(null);
     setEditingAgentId(null);
     setPendingArchiveAgent(null);
-    setIntegrations(null);
-    setIsIntegrationMenuOpen(false);
-    setIntegrationNotice(null);
     setAuthNotice(null);
     resetCreateAgentForm();
   }
@@ -572,7 +571,81 @@ export default function HomePage() {
     setAgentAllowedTasks("");
     setAgentRestrictions("");
     setEmployeeEmailDraft("");
-    setSelectedToolIds([]);
+    setSelectedToolkits([]);
+  }
+
+  function mergeAgentProgress(
+    currentTasks: AgentPlanTask[],
+    event: AgentProgressEvent,
+  ): AgentPlanTask[] {
+    if (event.parent_id) {
+      const parentIndex = currentTasks.findIndex((task) => task.id === event.parent_id);
+      const parentTask =
+        parentIndex >= 0
+          ? currentTasks[parentIndex]
+          : {
+              id: event.parent_id,
+              title: "Run tool calls",
+              description: "Executing external tools.",
+              status: "in-progress" as const,
+              tools: [],
+              subtasks: [],
+            };
+      const subtask = {
+        id: event.id,
+        title: event.title,
+        description: event.description,
+        status: event.status,
+        tools: event.tools,
+      };
+      const subtaskIndex = parentTask.subtasks.findIndex((item) => item.id === event.id);
+      const nextSubtasks =
+        subtaskIndex >= 0
+          ? parentTask.subtasks.map((item) => (item.id === event.id ? subtask : item))
+          : [...parentTask.subtasks, subtask];
+      const nextParent = {
+        ...parentTask,
+        subtasks: nextSubtasks,
+      };
+
+      if (parentIndex >= 0) {
+        return currentTasks.map((task) => (task.id === event.parent_id ? nextParent : task));
+      }
+
+      return [...currentTasks, nextParent];
+    }
+
+    const task = {
+      id: event.id,
+      title: event.title,
+      description: event.description,
+      status: event.status,
+      tools: event.tools,
+      subtasks: currentTasks.find((item) => item.id === event.id)?.subtasks ?? [],
+    };
+    const taskIndex = currentTasks.findIndex((item) => item.id === event.id);
+
+    if (taskIndex >= 0) {
+      return currentTasks.map((item) => (item.id === event.id ? task : item));
+    }
+
+    return [...currentTasks, task];
+  }
+
+  function toggleMessageRun(messageId: string) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId && message.run
+          ? {
+              ...message,
+              run: {
+                ...message.run,
+                isExpanded: !message.run.isExpanded,
+              },
+            }
+          : message,
+      ),
+    );
   }
 
   function openCreateAgentForm() {
@@ -589,18 +662,18 @@ export default function HomePage() {
     setAgentAllowedTasks(agent.agent_info.responsibilities ?? "");
     setAgentRestrictions(agent.agent_info.guardrails ?? "");
     setEmployeeEmailDraft(agent.assigned_user_emails.join(", "));
-    setSelectedToolIds(agent.agent_info.allowed_tool_ids ?? []);
+    setSelectedToolkits(agent.agent_info.allowed_toolkits ?? []);
     setEditingAgentId(agent.id);
     setAgentFormMode("edit");
     setOpenAgentMenuId(null);
     setIsAgentFormOpen(true);
   }
 
-  function toggleSelectedTool(toolId: string) {
-    setSelectedToolIds((current) =>
-      current.includes(toolId)
-        ? current.filter((currentToolId) => currentToolId !== toolId)
-        : [...current, toolId],
+  function toggleToolkit(toolkit: AgentToolkit) {
+    setSelectedToolkits((current) =>
+      current.includes(toolkit)
+        ? current.filter((currentToolkit) => currentToolkit !== toolkit)
+        : [...current, toolkit],
     );
   }
 
@@ -622,7 +695,6 @@ export default function HomePage() {
       credentials: "include",
       headers: {
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
-        ...(authSessionEmail ? { "x-auth-user-email": authSessionEmail } : {}),
         ...(init?.headers ?? {}),
       },
       cache: init?.cache ?? "no-store",
@@ -645,15 +717,12 @@ export default function HomePage() {
     }
   }
 
-  async function loadCurrentUser(sessionEmail = authSessionEmail) {
+  async function loadCurrentUser() {
     setIsAuthLoading(true);
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
         credentials: "include",
-        headers: {
-          ...(sessionEmail ? { "x-auth-user-email": sessionEmail } : {}),
-        },
         cache: "no-store",
       });
 
@@ -680,43 +749,7 @@ export default function HomePage() {
 
   async function loadWorkspace() {
     setError(null);
-    await Promise.all([
-      loadAgents(),
-      loadSessions(),
-      currentUser?.is_admin ? loadToolCatalog() : Promise.resolve(),
-    ]);
-  }
-
-  async function loadToolCatalog() {
-    try {
-      const response = await apiFetch("/api/tools");
-
-      if (!response.ok) {
-        throw new Error(await parseError(response, "Failed to load tools."));
-      }
-
-      const data = (await response.json()) as ToolCatalogEntry[];
-      setToolCatalog(data);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load tools.");
-    }
-  }
-
-  async function loadIntegrations() {
-    try {
-      const response = await apiFetch("/api/integrations");
-
-      if (!response.ok) {
-        throw new Error(await parseError(response, "Failed to load connected accounts."));
-      }
-
-      const data = (await response.json()) as IntegrationsResponse;
-      setIntegrations(data);
-    } catch (loadError) {
-      setIntegrationNotice(
-        loadError instanceof Error ? loadError.message : "Failed to load connected accounts.",
-      );
-    }
+    await Promise.all([loadAgents(), loadSessions()]);
   }
 
   async function loadAgents() {
@@ -777,8 +810,13 @@ export default function HomePage() {
         throw new Error(await parseError(response, "Failed to load messages."));
       }
 
-      const data = (await response.json()) as ChatMessage[];
-      setMessages(data);
+      const data = (await response.json()) as Array<Omit<ChatMessage, "id" | "run">>;
+      setMessages(
+        data.map((message, index) => ({
+          ...message,
+          id: createMessageId(message.role, message.created_at, index),
+        })),
+      );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load messages.");
     }
@@ -858,61 +896,10 @@ export default function HomePage() {
         method: "POST",
         credentials: "include",
       });
-      await signOut({ callbackUrl: "/" });
     } finally {
       setCurrentUser(null);
       setError(null);
       resetWorkspace();
-    }
-  }
-
-  function handleGoogleAuth() {
-    void signIn("google", { callbackUrl: "/" });
-  }
-
-  function handleIntegrationConnect(provider: IntegrationProviderKey) {
-    const providerSummary = integrations?.providers[provider];
-    const providerLabel =
-      provider === "meta" ? "Meta" : provider === "github" ? "GitHub" : provider[0].toUpperCase() + provider.slice(1);
-
-    if (!providerSummary?.configured) {
-      const missing = providerSummary?.missing.length
-        ? providerSummary.missing.join(", ")
-        : `${providerLabel} credentials`;
-      setIntegrationNotice(`${providerLabel} connection is not configured. Missing: ${missing}.`);
-      setIsIntegrationMenuOpen(false);
-      return;
-    }
-
-    window.location.href = `/api/integrations/${provider}/connect`;
-  }
-
-  async function handleIntegrationDisconnect(provider: IntegrationProviderKey) {
-    const providerLabel =
-      provider === "meta" ? "Meta" : provider === "github" ? "GitHub" : provider[0].toUpperCase() + provider.slice(1);
-
-    setPendingIntegrationProvider(provider);
-    setIntegrationNotice(null);
-
-    try {
-      const response = await apiFetch(`/api/integrations/${provider}/disconnect`, {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error(await parseError(response, `Failed to disconnect ${providerLabel}.`));
-      }
-
-      await loadIntegrations();
-      setIntegrationNotice(`${providerLabel} disconnected.`);
-    } catch (disconnectError) {
-      setIntegrationNotice(
-        disconnectError instanceof Error
-          ? disconnectError.message
-          : `Failed to disconnect ${providerLabel}.`,
-      );
-    } finally {
-      setPendingIntegrationProvider(null);
     }
   }
 
@@ -1086,18 +1073,29 @@ export default function HomePage() {
     }
 
     const userText = draft.trim();
+    const userCreatedAt = new Date().toISOString();
+    const assistantCreatedAt = new Date().toISOString();
+    const assistantMessageId = createMessageId("assistant", assistantCreatedAt);
+    activeAssistantMessageIdRef.current = assistantMessageId;
     setDraft("");
     setMessages((current) => [
       ...current,
       {
+        id: createMessageId("user", userCreatedAt),
         role: "user",
         content: userText,
-        created_at: new Date().toISOString(),
+        created_at: userCreatedAt,
       },
       {
+        id: assistantMessageId,
         role: "assistant",
         content: "",
-        created_at: new Date().toISOString(),
+        created_at: assistantCreatedAt,
+        run: {
+          status: "running",
+          tasks: [],
+          isExpanded: true,
+        },
       },
     ]);
     shouldAutoScrollRef.current = true;
@@ -1153,11 +1151,25 @@ export default function HomePage() {
       }
 
       await loadSessions();
-      if (threadId) {
-        await loadMessages(threadId);
-      }
       setFiles([]);
     } catch (streamError) {
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current;
+      if (activeAssistantMessageId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === activeAssistantMessageId && message.run
+              ? {
+                  ...message,
+                  run: {
+                    ...message.run,
+                    status: "failed",
+                    isExpanded: true,
+                  },
+                }
+              : message,
+          ),
+        );
+      }
       setError(
         streamError instanceof Error
           ? streamError.message
@@ -1165,6 +1177,7 @@ export default function HomePage() {
       );
     } finally {
       setIsSending(false);
+      activeAssistantMessageIdRef.current = null;
     }
   }
 
@@ -1194,21 +1207,32 @@ export default function HomePage() {
 
     if (eventName === "token") {
       const parsed = JSON.parse(payload) as { text: string };
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current;
       setMessages((current) => {
-        const next = [...current];
-        const lastIndex = next.length - 1;
-
-        if (lastIndex < 0) {
-          return next;
+        if (activeAssistantMessageId) {
+          return current.map((message) =>
+            message.id === activeAssistantMessageId
+              ? {
+                  ...message,
+                  content: `${message.content}${parsed.text}`,
+                }
+              : message,
+          );
         }
 
-        const lastMessage = next[lastIndex];
-        next[lastIndex] = {
-          ...lastMessage,
-          content: `${lastMessage.content}${parsed.text}`,
-        };
+        const lastIndex = current.length - 1;
+        if (lastIndex < 0) {
+          return current;
+        }
 
-        return next;
+        return current.map((message, index) =>
+          index === lastIndex
+            ? {
+                ...message,
+                content: `${message.content}${parsed.text}`,
+              }
+            : message,
+        );
       });
 
       requestAnimationFrame(() => {
@@ -1220,13 +1244,69 @@ export default function HomePage() {
       return null;
     }
 
+    if (eventName === "progress") {
+      const parsed = JSON.parse(payload) as AgentProgressEvent;
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current;
+      if (activeAssistantMessageId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === activeAssistantMessageId
+              ? {
+                  ...message,
+                  run: {
+                    status: "running",
+                    tasks: mergeAgentProgress(message.run?.tasks ?? [], parsed),
+                    isExpanded: true,
+                  },
+                }
+              : message,
+          ),
+        );
+      }
+      return null;
+    }
+
     if (eventName === "error") {
       const parsed = JSON.parse(payload) as { detail?: string };
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current;
+      if (activeAssistantMessageId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === activeAssistantMessageId && message.run
+              ? {
+                  ...message,
+                  run: {
+                    ...message.run,
+                    status: "failed",
+                    isExpanded: true,
+                  },
+                }
+              : message,
+          ),
+        );
+      }
       return parsed.detail ?? "Streaming failed.";
     }
 
     if (eventName === "done") {
       const parsed = JSON.parse(payload) as { thread_id?: string; title?: string };
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current;
+      if (activeAssistantMessageId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === activeAssistantMessageId && message.run
+              ? {
+                  ...message,
+                  run: {
+                    ...message.run,
+                    status: "completed",
+                    isExpanded: false,
+                  },
+                }
+              : message,
+          ),
+        );
+      }
       if (parsed.thread_id && parsed.title) {
         setSessions((current) =>
           current.map((session) =>
@@ -1273,7 +1353,7 @@ export default function HomePage() {
           purpose: agentPurpose,
           allowed_tasks: agentAllowedTasks,
           restrictions: agentRestrictions,
-          allowed_tool_ids: selectedToolIds,
+          allowed_toolkits: selectedToolkits,
           ...(!isEditingSystemAgent
             ? {
                 assigned_user_emails: employeeEmailDraft
@@ -1386,10 +1466,8 @@ export default function HomePage() {
   if (!currentUser) {
     return (
       <AuthSwitch
-        googleConfigured
         isLoading={isAuthSubmitting}
         notice={authNotice}
-        onGoogleLogin={handleGoogleAuth}
         onLogin={handleLogin}
         onSignup={handleSignup}
       />
@@ -1418,58 +1496,14 @@ export default function HomePage() {
 
     return session.agent_id === sidebarSelectionAgentId || !activeAgentIds.has(session.agent_id);
   });
-  const hasConversation = messages.length > 0;
+  const displayMessages = messages
+    .map((message, index) => ({ message, index }))
+    .filter(
+      ({ message, index }) =>
+        message.content.trim() || message.run || (isSending && index === messages.length - 1),
+    );
+  const hasConversation = displayMessages.length > 0;
   const sidebarToggleTitle = isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
-  const toolGroups = toolCatalog.reduce<Record<string, ToolCatalogEntry[]>>((groups, toolItem) => {
-    groups[toolItem.category] = [...(groups[toolItem.category] ?? []), toolItem];
-    return groups;
-  }, {});
-  const toolCategoryLabels: Record<ToolCatalogEntry["category"], string> = {
-    research: "Research",
-    company_data: "Company data",
-    ticketing: "Ticketing",
-    email: "Email",
-    developer: "Developer",
-    admin: "Admin",
-  };
-  const toolRiskStyles: Record<ToolCatalogEntry["risk"], string> = {
-    low: "border-[#536b55] text-[#a8c8a6]",
-    medium: "border-[#7a6a45] text-[#d2bd7a]",
-    high: "border-[#83534a] text-[#e29c8e]",
-  };
-  const integrationOptions: Array<{
-    provider: IntegrationProviderKey;
-    label: string;
-  }> = [
-    { provider: "google", label: "Google" },
-    { provider: "github", label: "GitHub" },
-    { provider: "linkedin", label: "LinkedIn" },
-    { provider: "meta", label: "Meta" },
-  ];
-
-  function integrationStatus(provider: IntegrationProviderKey): "connected" | "missing" | "available" {
-    const providerSummary = integrations?.providers[provider];
-    const isConnected = integrations?.accounts.some(
-      (account) => account.provider === provider && account.status === "connected",
-    );
-
-    if (isConnected) {
-      return "connected";
-    }
-    if (!providerSummary?.configured) {
-      return "missing";
-    }
-    return "available";
-  }
-
-  function connectedIntegrationAccount(provider: IntegrationProviderKey): IntegrationAccount | null {
-    return (
-      integrations?.accounts.find(
-        (account) => account.provider === provider && account.status === "connected",
-      ) ?? null
-    );
-  }
-
   function renderComposer(className?: string) {
     return (
       <div className={className}>
@@ -1527,91 +1561,6 @@ export default function HomePage() {
                   <Plus className="size-4" />
                 </label>
               </PromptInputAction>
-              <div className="relative" ref={integrationMenuRef}>
-                <PromptInputAction tooltip="Connect accounts">
-                  <button
-                    className="flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/6"
-                    onClick={() => {
-                      setIsIntegrationMenuOpen((current) => !current);
-                      setIntegrationNotice(null);
-                    }}
-                    type="button"
-                  >
-                    <Cable className="size-4" />
-                  </button>
-                </PromptInputAction>
-                {isIntegrationMenuOpen ? (
-                  <div className="absolute bottom-10 left-0 z-30 w-80 rounded-2xl border border-white/10 bg-[#211f1b] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]">
-                    <div className="border-b border-white/8 px-3 py-2.5">
-                      <p className="text-xs uppercase tracking-[0.16em] text-[#8d8579]">HumanTouch user</p>
-                      <p className="mt-1 truncate text-sm text-[#ece5d7]">{currentUser?.email ?? ""}</p>
-                    </div>
-                    {integrationOptions.map((option) => {
-                      const status = integrationStatus(option.provider);
-                      const account = connectedIntegrationAccount(option.provider);
-                      const isPending = pendingIntegrationProvider === option.provider;
-                      const statusLabel =
-                        status === "connected"
-                          ? "connected"
-                          : status === "missing"
-                            ? "config missing"
-                            : "not connected";
-
-                      return (
-                        <button
-                          key={option.provider}
-                          className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-[#ddd5c8] transition hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isPending}
-                          onClick={() => {
-                            if (status === "connected") {
-                              void handleIntegrationDisconnect(option.provider);
-                              return;
-                            }
-
-                            handleIntegrationConnect(option.provider);
-                          }}
-                          type="button"
-                        >
-                          <span className="min-w-0">
-                            <span className="block">{option.label}</span>
-                            {account ? (
-                              <span className="mt-0.5 block truncate text-xs text-[#8f8778]">
-                                Connected as {account.provider_email ?? account.provider_account_id}
-                              </span>
-                            ) : null}
-                          </span>
-                          <span className="inline-flex items-center gap-2 text-xs text-[#9f9788]">
-                            <span
-                              aria-hidden
-                              className={`relative inline-flex h-5 w-9 rounded-full border transition ${
-                                status === "connected"
-                                  ? "border-[#6f8f67] bg-[#405f3b]"
-                                  : "border-white/12 bg-[#302d28]"
-                              }`}
-                            >
-                              <span
-                                className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-[#e8dfd0] transition ${
-                                  status === "connected" ? "left-4.5" : "left-0.5"
-                                }`}
-                              />
-                            </span>
-                            <span className="inline-flex items-center gap-1.5">
-                              {status === "connected" ? (
-                                <CircleCheck className="size-3.5 text-[#a8c8a6]" />
-                              ) : status === "missing" ? (
-                                <CircleAlert className="size-3.5 text-[#d2bd7a]" />
-                              ) : (
-                                <Cable className="size-3.5" />
-                              )}
-                              {isPending ? "disconnecting" : statusLabel}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
               <span className="truncate">{activeAgent?.name ?? (activeSession ? "Archived agent" : "No agent selected")}</span>
             </div>
 
@@ -1638,9 +1587,6 @@ export default function HomePage() {
           </PromptInputActions>
         </PromptInput>
         {error ? <div className="mt-3 text-sm text-[#d97757]">{error}</div> : null}
-        {integrationNotice ? (
-          <div className="mt-3 text-sm text-[#d6b574]">{integrationNotice}</div>
-        ) : null}
       </div>
     );
   }
@@ -1800,66 +1746,53 @@ export default function HomePage() {
                     />
                   ) : null}
                   <div className="rounded-2xl border border-white/8 bg-[#1e1b18] p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm text-[#f2ede3]">Tool access</p>
-                      <span className="text-[11px] text-[#8f8778]">
-                        {selectedToolIds.length} selected
-                      </span>
+	                    <div className="mb-3 flex items-center justify-between gap-3">
+	                      <p className="text-sm text-[#f2ede3]">Toolkits</p>
+	                      <span className="text-[11px] text-[#8f8778]">
+	                        {selectedToolkits.length > 0
+	                          ? `${selectedToolkits.length} selected`
+	                          : "All discoverable"}
+	                      </span>
+	                    </div>
+	                    <p className="mb-3 text-xs leading-5 text-[#8f8778]">
+	                      Select toolkits to restrict this agent. Leave blank to allow Composio
+	                      meta-tools to discover available toolkits at runtime.
+	                    </p>
+	                    <div className="grid gap-2 sm:grid-cols-2">
+                      {toolkitOptions.map((toolkit) => {
+                        const isSelected = selectedToolkits.includes(toolkit.id);
+                        const Icon = toolkit.id === "gmail" ? Mail : GitBranch;
+
+                        return (
+                          <button
+                            key={toolkit.id}
+                            className={`flex min-h-24 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                              isSelected
+                                ? "border-[#f0b2a7]/70 bg-[#332722] text-[#f4e6de]"
+                                : "border-white/8 bg-[#24211d] text-[#bbb4a7] hover:bg-[#2b2824]"
+                            }`}
+                            onClick={() => toggleToolkit(toolkit.id)}
+                            type="button"
+                          >
+                            <span
+                              className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
+                                isSelected
+                                  ? "border-[#f0b2a7]/60 bg-[#4b312a] text-[#ffd0c6]"
+                                  : "border-white/10 bg-[#1e1b18] text-[#928a7c]"
+                              }`}
+                            >
+                              <Icon className="size-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">{toolkit.label}</span>
+                              <span className="mt-1 block text-xs leading-5 text-[#8f8778]">
+                                {toolkit.description}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
-                    {toolCatalog.length === 0 ? (
-                      <p className="mt-3 text-xs leading-5 text-[#8f8778]">
-                        No tools are available from the backend catalog.
-                      </p>
-                    ) : (
-                      <div className="mt-3 space-y-3">
-                        {Object.entries(toolGroups).map(([category, tools]) => (
-                          <div key={category}>
-                            <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-[#8f8778]">
-                              {toolCategoryLabels[category as ToolCatalogEntry["category"]] ?? category}
-                            </p>
-                            <div className="space-y-2">
-                              {tools.map((toolItem) => {
-                                const isSelected = selectedToolIds.includes(toolItem.id);
-                                return (
-                                  <label
-                                    key={toolItem.id}
-                                    className={`flex gap-3 rounded-xl border px-3 py-2.5 text-sm transition ${
-                                      toolItem.configured
-                                        ? "cursor-pointer border-white/8 bg-[#24211d] text-[#ddd5c8] hover:bg-[#2b2824]"
-                                        : "cursor-not-allowed border-white/5 bg-[#1b1916] text-[#736d62]"
-                                    }`}
-                                  >
-                                    <input
-                                      checked={isSelected}
-                                      className="mt-1 h-4 w-4 accent-[#efe7d8]"
-                                      disabled={!toolItem.configured}
-                                      onChange={() => toggleSelectedTool(toolItem.id)}
-                                      type="checkbox"
-                                    />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="flex flex-wrap items-center gap-2">
-                                        <span className="font-medium">{toolItem.label}</span>
-                                        <span
-                                          className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${toolRiskStyles[toolItem.risk]}`}
-                                        >
-                                          {toolItem.risk}
-                                        </span>
-                                        {!toolItem.configured ? (
-                                          <span className="text-[11px] text-[#d97757]">Not configured</span>
-                                        ) : null}
-                                      </span>
-                                      <span className="mt-1 block text-xs leading-5 text-[#9f9788]">
-                                        {toolItem.promptDescription}
-                                      </span>
-                                    </span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
                 <div className="mt-5 flex shrink-0 items-center justify-between gap-3">
@@ -2298,15 +2231,15 @@ export default function HomePage() {
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#1f1d19]/72">
                 <div
-                  ref={transcriptRef}
-                  className="min-h-0 flex-1 overflow-y-auto px-6 py-5 pb-[12.5rem] sm:px-10 sm:pb-[13rem] lg:px-12 ht-scroll-region"
+	                  ref={transcriptRef}
+	                  className="min-h-0 flex-1 overflow-y-auto px-6 py-5 pb-[16rem] sm:px-10 sm:pb-[17rem] lg:px-12 ht-scroll-region"
                   onScroll={updateAutoScrollState}
                 >
                   {hasConversation ? (
                     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3.5">
-                      {messages.map((message, index) => (
+                      {displayMessages.map(({ message, index }) => (
                         <article
-                          key={`${message.created_at}-${index}`}
+                          key={message.id}
                           className={`rounded-[1.4rem] px-4 py-3.5 sm:px-5 ${
                             message.role === "user"
                               ? "ml-auto max-w-[84%] bg-[#2b2824] text-[#ece5d8] sm:max-w-[74%]"
@@ -2317,11 +2250,25 @@ export default function HomePage() {
                             {message.role}
                           </p>
                           {message.role === "assistant" ? (
-                            <div className="text-[0.94rem] text-[#ddd7ca]">
-                              {renderAssistantMarkdown(
-                                message.content ||
-                                  (isSending && index === messages.length - 1 ? "..." : ""),
-                              )}
+                            <div className="space-y-3 text-[0.94rem] text-[#ddd7ca]">
+                              {message.run ? (
+                                <AgentPlan
+                                  agentName={activeAgent?.name}
+                                  isExpanded={message.run.isExpanded}
+                                  isRunning={message.run.status === "running"}
+                                  onToggleExpanded={() => toggleMessageRun(message.id)}
+                                  tasks={message.run.tasks}
+                                />
+                              ) : null}
+                              {message.content ||
+                              (isSending && index === messages.length - 1 && !message.run) ? (
+                                <div>
+                                  {renderAssistantMarkdown(
+                                    message.content ||
+                                      (isSending && index === messages.length - 1 ? "..." : ""),
+                                  )}
+                                </div>
+                              ) : null}
                             </div>
                           ) : (
                             <p className="whitespace-pre-wrap text-[0.94rem] leading-6 text-[#ddd7ca]">
@@ -2352,10 +2299,10 @@ export default function HomePage() {
                 </div>
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-[linear-gradient(180deg,rgba(31,29,25,0.98)_0%,rgba(31,29,25,0.82)_38%,rgba(31,29,25,0)_100%)]" />
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 px-6 pb-4 sm:px-10 lg:px-12">
-                  <div className="absolute inset-x-0 bottom-0 h-32 bg-[linear-gradient(180deg,rgba(31,29,25,0)_0%,rgba(31,29,25,0.95)_48%,rgba(31,29,25,1)_100%)]" />
-                  <div className="pointer-events-auto relative mx-auto w-full max-w-3xl">
-                    {renderComposer("translate-y-0 opacity-100 transition-all duration-300 ease-out")}
-                  </div>
+	                  <div className="absolute inset-x-0 bottom-0 h-32 bg-[linear-gradient(180deg,rgba(31,29,25,0)_0%,rgba(31,29,25,0.95)_48%,rgba(31,29,25,1)_100%)]" />
+	                  <div className="pointer-events-auto relative mx-auto flex w-full max-w-3xl flex-col gap-3">
+	                    {renderComposer("translate-y-0 opacity-100 transition-all duration-300 ease-out")}
+	                  </div>
                 </div>
               </div>
             </div>

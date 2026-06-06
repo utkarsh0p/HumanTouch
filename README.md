@@ -2,12 +2,12 @@
 
 HumanTouch is a company-facing webapp for creating and managing AI agents for employees.
 
-The current backend direction now assumes a real company/user data model: companies, users, admin-managed agents, access assignments, session metadata, and LangGraph-backed chat execution. The architecture is still being shaped so this can later plug into a larger PostgreSQL-based business application instead of remaining a separate silo.
+The current backend direction now assumes a real company/user data model: companies, users, admin-managed agents, access assignments, session metadata, and LangChain `createAgent` chat execution with LangGraph checkpoint persistence. The architecture is still being shaped so this can later plug into a larger PostgreSQL-based business application instead of remaining a separate silo.
 
 ## Stack
 
 - `frontend/`: Next.js + Tailwind chat UI
-- `backend/`: Node.js + TypeScript + Fastify + Prisma + LangGraph.js + Gemini + PostgreSQL
+- `backend/`: Node.js + TypeScript + Fastify + Prisma + LangChain `createAgent` + Composio + Gemini + PostgreSQL
 
 ## Product Direction
 
@@ -37,12 +37,11 @@ The canonical data-model reference is in `SCHEMA.md`.
 
 ## Local setup
 
-1. Copy backend, auth, and integration values into `.env` at the repo root.
+1. Copy backend and auth values into `.env` at the repo root.
 2. Keep only frontend-local public values in `frontend/.env.local`. The frontend loads root `.env` through `frontend/next.config.ts`.
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
-AUTH_URL=http://localhost:3000
 ```
 
 3. Start the backend:
@@ -98,28 +97,11 @@ LANGGRAPH_DB_SCHEMA=langgraph
 GEMINI_API_KEY=
 GOOGLE_API_KEY=
 GEMINI_MODEL=gemini-2.5-pro
+COMPOSIO_API_KEY=
 PORT=3001
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 FRONTEND_BASE_URL=http://localhost:3000
-AUTH_SECRET=
-AUTH_GOOGLE_ID=
-AUTH_GOOGLE_SECRET=
-GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001/api/integrations/google/callback
-GOOGLE_OAUTH_SCOPES=openid,email,profile,https://www.googleapis.com/auth/gmail.compose,https://www.googleapis.com/auth/gmail.readonly
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-GITHUB_REDIRECT_URI=http://localhost:3001/api/integrations/github/callback
-GITHUB_SCOPES=read:user,user:email
-TOKEN_ENCRYPTION_KEY=
-LINKEDIN_CLIENT_ID=
-LINKEDIN_CLIENT_SECRET=
-LINKEDIN_REDIRECT_URI=http://localhost:3001/api/integrations/linkedin/callback
-LINKEDIN_SCOPES=openid,profile,email
-META_CLIENT_ID=
-META_CLIENT_SECRET=
-META_REDIRECT_URI=http://localhost:3001/api/integrations/meta/callback
-META_SCOPES=email,public_profile
 ```
 
 ## Current Backend Scope
@@ -131,46 +113,50 @@ META_SCOPES=email,public_profile
 - role-based and direct user assignment tables
 - multiple chat sessions
 - PostgreSQL-backed session metadata and message history
-- one main LangGraph.js workflow in TypeScript with admin and employee subgraphs
+- LangChain JS `createAgent` runtime with Gemini, Composio tools, and LangGraph checkpoint persistence
 - SSE streaming from backend to frontend
 
-## Workflow Runtime
+## Agent Runtime
 
-Chat execution now uses one backend workflow entrypoint.
+Chat execution uses one selected-agent runner for every HumanTouch agent, including the built-in `Admin` agent and admin-created agents.
 
-Request handling builds a `WorkflowState` from the authenticated user, selected
-session, selected agent, assignment/access result, per-session prompt, and
-message history. The main LangGraph workflow routes that state into either the
-admin subgraph or employee subgraph.
+Request handling loads the authenticated user, selected session, selected agent,
+assignment/access result, per-session prompt, and product-readable message
+history. The backend then creates a LangChain `createAgent` with the selected
+agent's system prompt, the Gemini model, Composio tools, and the existing
+Postgres checkpointer.
 
-Access is still enforced before graph execution:
+Access is still enforced before agent execution:
 
 - admins can use any non-archived agent in their company
 - employees can use only agents assigned directly to them or to their role
-- no workflow branch may cross the request user's `company_id`
+- no chat request may cross the request user's `company_id`
 
-The admin and employee workflows share the selected-agent runtime. That means an
-admin can open and use a Marketing, HR, Finance, or other company agent when a
-human employee is unavailable, while an employee remains limited to assigned
-agents.
+The runtime passes the existing `thread_id` into LangGraph config so
+checkpointed state remains tied to the HumanTouch session. If no checkpoint
+exists for a thread, the runner restores context from `agent_messages`.
+
+The chat stream emits `token`, `progress`, `done`, and `error` SSE events.
+`progress` events are transient run UI updates for context preparation,
+Composio tool loading, tool calls, and response generation; persisted chat
+history still comes from `agent_messages`.
 
 ## Tool Runtime
 
-Tools are registered centrally in the backend and bound per selected agent at
-runtime. Agent definitions store allowed tool IDs in `agent_info.allowed_tool_ids`;
-the runtime resolves those IDs through the configured registry and passes only
-those tools to `llm.bindTools(...)`.
+Composio is the only tool source. Admins can optionally select Gmail and/or
+GitHub to restrict an agent. If no toolkit is selected, the agent receives
+Composio's default meta-tools and can discover available toolkits at runtime.
 
-The current real tools are `web_search`, backed by Tavily, and Gmail tools
-backed by the current user's connected Google OAuth account. `web_search` is
-available only when `TAVILY_API_KEY` is set. Gmail tools are available when
-Google OAuth and `TOKEN_ENCRYPTION_KEY` are configured, and the connected account
-has the required Gmail scopes. Admins assign tools explicitly from the backend
-tool catalog, and agent create/update APIs persist only backend-validated
-`allowed_tool_ids`.
+The backend creates or reuses a Composio tool-router session for the current
+HumanTouch user, applies selected toolkit restrictions when present, disables
+Composio workbench/bash, and passes `session.tools()` into `createAgent`.
 
-Tool permissions are enforced by backend binding. Prompt text may describe
-available capabilities, but it is not the authority for whether a tool can run.
+Composio meta-tools provide search, schema lookup, execution, and connection
+management. If `COMPOSIO_API_KEY` is missing or Composio tool loading fails,
+chat still runs through `createAgent` with `tools: []`.
+
+There is no HumanTouch-owned local tool registry and no individual tool-action
+selection in v1.
 
 ## Migrations
 
@@ -206,13 +192,12 @@ Current transition status:
 
 ## Auth
 
-The backend supports local auth and a NextAuth sync bridge with:
+The backend supports local email/password auth with:
 
 - `POST /api/auth/signup`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
-- `POST /api/auth/nextauth/sync`
 
 Behavior:
 
@@ -233,58 +218,6 @@ Example:
 curl -H "x-dev-user-email: utkarshsingh@gmail.com" http://localhost:3001/api/agents
 ```
 
-## NextAuth Login and Tool Integrations
-
-Google login/signup is handled by NextAuth in the frontend app. Register this
-login callback on the OAuth client used by `AUTH_GOOGLE_ID` and
-`AUTH_GOOGLE_SECRET`:
-
-```text
-http://localhost:3000/api/auth/callback/google
-```
-
-The backend does not own the login OAuth redirect. NextAuth signs in the user
-and calls the backend sync route so HumanTouch can create or update its
-local user row.
-
-Tool integrations are separate from login OAuth. They store connected-account
-tokens for future agent tools in the backend database. The current auth and
-integration routes are:
-
-- `POST /api/auth/nextauth/sync`
-- `GET /api/integrations`
-- `POST /api/integrations/google/disconnect`
-- `POST /api/integrations/github/disconnect`
-- `GET /api/tools`
-
-For tool integrations, register these backend callbacks on the OAuth clients
-used by `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `GITHUB_CLIENT_ID`, and
-`GITHUB_CLIENT_SECRET`:
-
-```text
-http://localhost:3001/api/integrations/google/callback
-http://localhost:3001/api/integrations/github/callback
-```
-
-The backend stores tool-integration access and refresh tokens encrypted in
-`humantouch.connected_accounts`. The frontend only receives connection status
-and provider email, never raw provider tokens.
-
-The current product model treats the HumanTouch user as the owner of each
-provider connection. The external provider account can be a different identity
-from the HumanTouch login email. For example, HumanTouch user
-`utkarshsingh@gmail.com` can connect Google account `utkarshsingh2k6@gmail.com`
-and GitHub account `utkarsh0p`; tools act through the connected provider
-account, while access control remains scoped to the HumanTouch user.
-
-The provider menu should make this explicit:
-
-- show the current HumanTouch user email
-- show connected providers as `Connected as <provider email/account id>`
-- use the provider toggle as the source of connection state
-- off/not connected starts OAuth connect
-- on/connected calls `POST /api/integrations/:provider/disconnect` and clears stored tokens
-
 ## Database Access
 
 HumanTouch product data now uses Prisma for normal CRUD.
@@ -294,7 +227,6 @@ Prisma manages the app tables in `APP_DB_SCHEMA`, which defaults to `humantouch`
 - `companies`
 - `users`
 - `auth_sessions`
-- `connected_accounts`
 - `agents`
 - `agent_role_assignments`
 - `agent_user_assignments`

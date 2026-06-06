@@ -55,27 +55,9 @@ const envSchema = z
     GEMINI_API_KEY: z.string().optional(),
     GOOGLE_API_KEY: z.string().optional(),
     GEMINI_MODEL: z.string().min(1).default("gemini-2.5-pro"),
-    TAVILY_API_KEY: z.string().optional(),
+    COMPOSIO_API_KEY: z.string().optional(),
     ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
     FRONTEND_BASE_URL: z.string().url().optional(),
-    GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
-    GOOGLE_OAUTH_SCOPES: z.string().optional(),
-    AUTH_SECRET: z.string().optional(),
-    AUTH_GOOGLE_ID: z.string().optional(),
-    AUTH_GOOGLE_SECRET: z.string().optional(),
-    GITHUB_CLIENT_ID: z.string().optional(),
-    GITHUB_CLIENT_SECRET: z.string().optional(),
-    GITHUB_REDIRECT_URI: z.string().url().optional(),
-    GITHUB_SCOPES: z.string().optional(),
-    LINKEDIN_CLIENT_ID: z.string().optional(),
-    LINKEDIN_CLIENT_SECRET: z.string().optional(),
-    LINKEDIN_REDIRECT_URI: z.string().url().optional(),
-    LINKEDIN_SCOPES: z.string().optional(),
-    META_CLIENT_ID: z.string().optional(),
-    META_CLIENT_SECRET: z.string().optional(),
-    META_REDIRECT_URI: z.string().url().optional(),
-    META_SCOPES: z.string().optional(),
-    TOKEN_ENCRYPTION_KEY: z.string().optional(),
   })
   .transform((env) => {
     const googleApiKey = env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY;
@@ -91,7 +73,7 @@ const envSchema = z
       langgraphSchema: env.LANGGRAPH_DB_SCHEMA,
       googleApiKey,
       geminiModel: env.GEMINI_MODEL,
-      tavilyApiKey: env.TAVILY_API_KEY,
+      composioApiKey: env.COMPOSIO_API_KEY,
       allowedOrigins: expandAllowedOrigins(
         includeCommonDevOrigins(
           env.ALLOWED_ORIGINS.split(",")
@@ -105,58 +87,6 @@ const envSchema = z
           .map((origin) => origin.trim())
           .filter(Boolean)[0] ??
         "http://localhost:3000",
-      googleOAuth: {
-        clientId: env.AUTH_GOOGLE_ID,
-        clientSecret: env.AUTH_GOOGLE_SECRET,
-        redirectUri:
-          env.GOOGLE_OAUTH_REDIRECT_URI ??
-          `http://localhost:${env.PORT}/api/integrations/google/callback`,
-        scopes:
-          env.GOOGLE_OAUTH_SCOPES?.split(",")
-            .map((scope) => scope.trim())
-            .filter(Boolean) ?? [
-            "openid",
-            "email",
-            "profile",
-            "https://www.googleapis.com/auth/gmail.compose",
-            "https://www.googleapis.com/auth/gmail.readonly",
-          ],
-      },
-      githubOAuth: {
-        clientId: env.GITHUB_CLIENT_ID,
-        clientSecret: env.GITHUB_CLIENT_SECRET,
-        redirectUri:
-          env.GITHUB_REDIRECT_URI ??
-          `http://localhost:${env.PORT}/api/integrations/github/callback`,
-        scopes:
-          env.GITHUB_SCOPES?.split(",")
-            .map((scope) => scope.trim())
-            .filter(Boolean) ?? ["read:user", "user:email", "repo"],
-      },
-      linkedinOAuth: {
-        clientId: env.LINKEDIN_CLIENT_ID,
-        clientSecret: env.LINKEDIN_CLIENT_SECRET,
-        redirectUri:
-          env.LINKEDIN_REDIRECT_URI ??
-          `http://localhost:${env.PORT}/api/integrations/linkedin/callback`,
-        scopes:
-          env.LINKEDIN_SCOPES?.split(",")
-            .map((scope) => scope.trim())
-            .filter(Boolean) ?? ["openid", "profile", "email"],
-      },
-      metaOAuth: {
-        clientId: env.META_CLIENT_ID,
-        clientSecret: env.META_CLIENT_SECRET,
-        redirectUri:
-          env.META_REDIRECT_URI ??
-          `http://localhost:${env.PORT}/api/integrations/meta/callback`,
-        scopes:
-          env.META_SCOPES?.split(",")
-            .map((scope) => scope.trim())
-            .filter(Boolean) ?? ["email", "public_profile"],
-      },
-      authSecret: env.AUTH_SECRET,
-      tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
     };
   });
 

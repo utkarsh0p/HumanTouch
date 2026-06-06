@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  Globe,
   LockKeyhole,
   LogIn,
   Mail,
@@ -26,22 +25,16 @@ type SignupValues = {
 
 type AuthSwitchProps = {
   isLoading?: boolean;
-  googleConfigured?: boolean;
-  googleMissing?: string[];
   initialMode?: "signin" | "signup";
   notice?: string | null;
-  onGoogleLogin: () => void;
   onLogin: (values: LoginValues) => Promise<string | null | void>;
   onSignup: (values: SignupValues) => Promise<string | null | void>;
 };
 
 export function AuthSwitch({
   isLoading = false,
-  googleConfigured = false,
-  googleMissing = [],
   initialMode = "signin",
   notice = null,
-  onGoogleLogin,
   onLogin,
   onSignup,
 }: AuthSwitchProps) {
@@ -102,25 +95,6 @@ export function AuthSwitch({
                 <p className="ht-auth-copy">
                   Sign in to enter HumanTouch and continue working with your assigned agents.
                 </p>
-                <button
-                  className="ht-auth-button"
-                  disabled={isLoading}
-                  onClick={onGoogleLogin}
-                  type="button"
-                >
-                  <Globe className="size-4" />
-                  Continue with Google
-                </button>
-                {!googleConfigured ? (
-                  <p className="mt-2 text-xs leading-5 text-[#a79e90]">
-                    Google OAuth is implemented. Add the OAuth env values to enable this login.
-                  </p>
-                ) : null}
-                <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-[#786f64]">
-                  <span className="h-px flex-1 bg-white/10" />
-                  Or sign in with email
-                  <span className="h-px flex-1 bg-white/10" />
-                </div>
                 <div className="ht-auth-field">
                   <Mail className="size-4.5 text-[#867d70]" />
                   <input
@@ -158,25 +132,6 @@ export function AuthSwitch({
                 <p className="ht-auth-copy">
                   Create an employee account for the workspace.
                 </p>
-                <button
-                  className="ht-auth-button"
-                  disabled={isLoading}
-                  onClick={onGoogleLogin}
-                  type="button"
-                >
-                  <Globe className="size-4" />
-                  Sign up with Google
-                </button>
-                {!googleConfigured ? (
-                  <p className="mt-2 text-xs leading-5 text-[#a79e90]">
-                    Google OAuth is implemented. Add the OAuth env values to enable this signup.
-                  </p>
-                ) : null}
-                <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-[#786f64]">
-                  <span className="h-px flex-1 bg-white/10" />
-                  Or create with email
-                  <span className="h-px flex-1 bg-white/10" />
-                </div>
                 <div className="ht-auth-field">
                   <UserRound className="size-4.5 text-[#867d70]" />
                   <input
@@ -259,19 +214,11 @@ export function AuthSwitch({
                 <Mail className="size-4" />
               </span>
               <span className="ht-auth-social">
-                <Globe className="size-4" />
-              </span>
-              <span className="ht-auth-social">
                 <UserRound className="size-4" />
               </span>
             </div>
             {error ? <p className="text-sm text-[#f0a487]">{error}</p> : null}
             {notice ? <p className="text-sm text-[#d8cbbb]">{notice}</p> : null}
-            {!googleConfigured && googleMissing.length > 0 ? (
-              <p className="max-w-xl text-center text-xs leading-5 text-[#8f8678]">
-                Missing OAuth config: {googleMissing.join(", ")}
-              </p>
-            ) : null}
           </div>
         </div>
       </div>

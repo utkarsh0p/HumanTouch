@@ -3,9 +3,11 @@ import { z } from "zod";
 
 import { settings } from "../config.js";
 import { prisma } from "../db/prisma.js";
-import { buildWorkflowState } from "../langgraph/services/workflow-state.js";
-import type { WorkflowState } from "../langgraph/state.js";
-import { streamMainWorkflowResponse } from "../langgraph/workflow.js";
+import {
+  buildSelectedAgentRuntimeState,
+  generateDirectAgentResponse,
+  streamSelectedAgentResponse,
+} from "../langgraph/agent-runtime.js";
 import { generateSessionTitle } from "../langgraph/session-title.js";
 import { canUserAccessSession } from "../services/access.js";
 
@@ -15,6 +17,8 @@ const chatStreamSchema = z.object({
 });
 
 const defaultSessionTitle = "New session";
+const emptyAssistantFallback =
+  "I could not complete that response because the agent tried to use an external tool but did not return a final answer. Please try again, or connect the required integration if this request needs external data.";
 
 function writeSseEvent(
   writable: NodeJS.WritableStream,
@@ -69,15 +73,15 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
-    let workflowState: WorkflowState;
+    let runtimeState;
     try {
-      workflowState = await buildWorkflowState({
+      runtimeState = await buildSelectedAgentRuntimeState({
         user: request.currentUser,
         threadId: payload.thread_id,
         message: payload.message,
       });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Failed to prepare workflow.";
+      const detail = error instanceof Error ? error.message : "Failed to prepare agent runtime.";
       reply.code(detail === "Session not found." ? 404 : 403);
       return { detail };
     }
@@ -98,21 +102,39 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const assistantParts: string[] = [];
+    let finalAssistantText = "";
 
     try {
-      const workflow = await streamMainWorkflowResponse(workflowState);
+      const stream = streamSelectedAgentResponse(runtimeState);
 
-      for await (const chunk of workflow.stream) {
-        const text = workflow.extractText(chunk.content);
-        if (!text) {
+      for await (const event of stream) {
+        if (event.type === "progress") {
+          writeSseEvent(reply.raw, "progress", event.progress);
           continue;
         }
 
-        assistantParts.push(text);
-        writeSseEvent(reply.raw, "token", { text });
+        if (event.type === "final") {
+          finalAssistantText = event.text;
+          continue;
+        }
+
+        if (!event.text) {
+          continue;
+        }
+
+        assistantParts.push(event.text);
+        writeSseEvent(reply.raw, "token", { text: event.text });
       }
 
-      const assistantText = assistantParts.join("").trim();
+      const streamedText = assistantParts.join("").trim();
+      let assistantText = streamedText || finalAssistantText.trim();
+      if (!assistantText) {
+        assistantText = (await generateDirectAgentResponse(runtimeState)) || emptyAssistantFallback;
+      }
+      if (!streamedText && assistantText) {
+        writeSseEvent(reply.raw, "token", { text: assistantText });
+      }
+
       const completedAt = new Date();
 
       await prisma.agentMessage.create({
