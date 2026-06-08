@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ensureAdmin, getAccessibleAgents } from "../services/access.js";
 import { archiveAgent, createAgent, updateAgent } from "../services/agents.js";
 
-const allowedToolkitSchema = z.enum(["gmail", "github"]);
+const allowedToolkitSchema = z.enum(["gmail", "github", "tavily"]);
 
 const createAgentSchema = z.object({
   name: z.string().trim().min(1),

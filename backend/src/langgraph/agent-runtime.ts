@@ -6,10 +6,10 @@ import {
 } from "@langchain/core/messages";
 import type { DynamicStructuredTool } from "@langchain/core/tools";
 import { ChatGoogle } from "@langchain/google/node";
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import { Composio, type Session } from "@composio/core";
+import { Composio } from "@composio/core";
 import { LangchainProvider } from "@composio/langchain";
-import { createAgent } from "langchain";
 
 import { settings } from "../config.js";
 import { prisma } from "../db/prisma.js";
@@ -28,29 +28,11 @@ const llm = new ChatGoogle({
 
 let checkpointerPromise: Promise<PostgresSaver> | null = null;
 let composioClient: Composio<LangchainProvider> | null = null;
-const composioSessionPromises = new Map<
-  string,
-  Promise<Session<unknown, unknown, LangchainProvider>>
->();
-
-type RuntimeMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
 
 export type SelectedAgentStreamEvent =
-  | {
-      type: "token";
-      text: string;
-    }
-  | {
-      type: "final";
-      text: string;
-    }
-  | {
-      type: "progress";
-      progress: AgentProgressEvent;
-    };
+  | { type: "token"; text: string }
+  | { type: "final"; text: string }
+  | { type: "progress"; progress: AgentProgressEvent };
 
 export type SelectedAgentRuntimeState = {
   user: AuthenticatedUser;
@@ -61,10 +43,13 @@ export type SelectedAgentRuntimeState = {
     systemPromptUsed: string | null;
   };
   agent: AgentRecord;
-  input: {
-    message: string;
-  };
+  input: { message: string };
   history: RuntimeMessage[];
+};
+
+type RuntimeMessage = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 function getCurrentDateContext(): string {
@@ -74,8 +59,18 @@ function getCurrentDateContext(): string {
     timeStyle: "short",
     timeZone: "Asia/Kolkata",
   });
-
   return formatter.format(now);
+}
+
+function getComposioClient(): Composio<LangchainProvider> | null {
+  if (!settings.composioApiKey) return null;
+  if (!composioClient) {
+    composioClient = new Composio({
+      apiKey: settings.composioApiKey,
+      provider: new LangchainProvider(),
+    });
+  }
+  return composioClient;
 }
 
 export async function getWorkflowCheckpointer(): Promise<PostgresSaver> {
@@ -88,8 +83,35 @@ export async function getWorkflowCheckpointer(): Promise<PostgresSaver> {
       return saver;
     })();
   }
-
   return checkpointerPromise;
+}
+
+async function loadComposioTools(
+  userId: string,
+  toolkits: string[],
+): Promise<DynamicStructuredTool[]> {
+  const client = getComposioClient();
+  if (!client) {
+    console.warn("[Composio] COMPOSIO_API_KEY is not configured; external tools are unavailable.");
+    return [];
+  }
+
+  try {
+    const session = await client.create(
+      userId,
+      toolkits.length > 0 ? { toolkits } : undefined,
+    );
+    const tools = await session.tools();
+    console.info("[Composio] Loaded tools.", {
+      userId,
+      toolkits,
+      toolCount: tools.length,
+    });
+    return tools as DynamicStructuredTool[];
+  } catch (error) {
+    console.warn("[Composio] Failed to load tools:", error);
+    return [];
+  }
 }
 
 export async function buildSelectedAgentRuntimeState({
@@ -102,19 +124,12 @@ export async function buildSelectedAgentRuntimeState({
   message: string;
 }): Promise<SelectedAgentRuntimeState> {
   const session = await prisma.agentSession.findFirst({
-    where: {
-      threadId,
-      companyId: user.company_id,
-    },
+    where: { threadId, companyId: user.company_id },
   });
-  if (!session) {
-    throw new Error("Session not found.");
-  }
+  if (!session) throw new Error("Session not found.");
 
-  const canAccessAgent = await canUserAccessAgent(user, session.agentId);
-  if (!canAccessAgent) {
-    throw new Error("Agent access denied.");
-  }
+  const canAccess = await canUserAccessAgent(user, session.agentId);
+  if (!canAccess) throw new Error("Agent access denied.");
 
   const agent = await getAgentById(session.agentId);
   if (!agent || agent.company_id !== user.company_id) {
@@ -122,15 +137,9 @@ export async function buildSelectedAgentRuntimeState({
   }
 
   const messages = await prisma.agentMessage.findMany({
-    where: {
-      threadId,
-      role: { in: ["user", "assistant"] },
-    },
+    where: { threadId, role: { in: ["user", "assistant"] } },
     orderBy: { createdAt: "asc" },
-    select: {
-      role: true,
-      content: true,
-    },
+    select: { role: true, content: true },
   });
 
   return {
@@ -143,114 +152,49 @@ export async function buildSelectedAgentRuntimeState({
     },
     agent,
     input: { message },
-    history: messages.map((item) => ({
-      role: item.role as RuntimeMessage["role"],
-      content: item.content,
+    history: messages.map((m) => ({
+      role: m.role as RuntimeMessage["role"],
+      content: m.content,
     })),
   };
 }
 
-export function buildRuntimePrompt(state: SelectedAgentRuntimeState): string {
-  const promptParts = [
+export function buildRuntimePrompt(
+  state: SelectedAgentRuntimeState,
+  hasTools: boolean,
+): string {
+  const parts = [
     state.session.systemPromptUsed || state.agent.system_prompt,
     "",
     "Runtime context:",
     `Current date/time: ${getCurrentDateContext()} (Asia/Kolkata).`,
-    "Use this runtime date for any question involving today, current date, now, tomorrow, yesterday, latest, or recent information. Do not infer dates from model memory.",
-    "Use external tools only when the user explicitly asks for external, account-specific, or live data. For ordinary general-knowledge, identity, or date questions, answer directly from the conversation and runtime context.",
-    "If you call a tool, you must continue after the tool result and produce a final text answer for the user.",
+    "Use this runtime date for any question involving today, current date, now, tomorrow, yesterday, latest, or recent information.",
   ];
 
-  if (state.session.userPrompt?.trim()) {
-    promptParts.push("", "User style preferences:", state.session.userPrompt.trim());
+  if (hasTools) {
+    parts.push(
+      "",
+      "You have access to Composio tools. Use them to complete the user's request.",
+      "If an app is not connected, use the connection tool to generate an OAuth link for the user.",
+    );
+  } else {
+    parts.push(
+      "",
+      "You have no external tools available. Do not claim you can perform any external actions.",
+    );
   }
 
-  return promptParts.join("\n");
+  if (state.session.userPrompt?.trim()) {
+    parts.push("", "User style preferences:", state.session.userPrompt.trim());
+  }
+
+  return parts.join("\n");
 }
 
 export function createConversationInput(state: SelectedAgentRuntimeState): BaseMessage[] {
-  return state.history.map((message) =>
-    message.role === "assistant"
-      ? new AIMessage(message.content)
-      : new HumanMessage(message.content),
+  return state.history.map((m) =>
+    m.role === "assistant" ? new AIMessage(m.content) : new HumanMessage(m.content),
   );
-}
-
-export async function generateDirectAgentResponse(
-  state: SelectedAgentRuntimeState,
-): Promise<string> {
-  const response = await llm.invoke([
-    new SystemMessage(
-      [
-        buildRuntimePrompt(state),
-        "",
-        "External tools are unavailable for this retry. Answer directly in text using the conversation history and runtime context.",
-      ].join("\n"),
-    ),
-    ...createConversationInput(state),
-  ]);
-
-  return extractText(response.content).trim();
-}
-
-function getComposioClient(): Composio<LangchainProvider> | null {
-  if (!settings.composioApiKey) {
-    return null;
-  }
-
-  if (!composioClient) {
-    composioClient = new Composio({
-      apiKey: settings.composioApiKey,
-      provider: new LangchainProvider(),
-    });
-  }
-
-  return composioClient;
-}
-
-async function getComposioSession(
-  userId: string,
-  toolkits: string[],
-): Promise<Session<unknown, unknown, LangchainProvider> | null> {
-  const client = getComposioClient();
-  if (!client) {
-    return null;
-  }
-
-  const selectedToolkits = [...toolkits].sort();
-  const cacheKey = `${userId}:${selectedToolkits.length > 0 ? selectedToolkits.join(",") : "all"}`;
-  let sessionPromise = composioSessionPromises.get(cacheKey);
-  if (!sessionPromise) {
-    sessionPromise = client.create(userId, {
-      ...(selectedToolkits.length > 0 ? { toolkits: selectedToolkits } : {}),
-      manageConnections: true,
-      workbench: { enable: false },
-    });
-    composioSessionPromises.set(cacheKey, sessionPromise);
-  }
-
-  try {
-    return await sessionPromise;
-  } catch (error) {
-    composioSessionPromises.delete(cacheKey);
-    throw error;
-  }
-}
-
-async function getComposioTools(
-  userId: string,
-  toolkits: string[],
-): Promise<DynamicStructuredTool[]> {
-  try {
-    const session = await getComposioSession(userId, toolkits);
-    if (!session) {
-      return [];
-    }
-
-    return await session.tools();
-  } catch {
-    return [];
-  }
 }
 
 async function createAgentInputMessages(
@@ -267,8 +211,25 @@ async function createAgentInputMessages(
   return createConversationInput(state);
 }
 
+export async function generateDirectAgentResponse(
+  state: SelectedAgentRuntimeState,
+): Promise<string> {
+  const response = await llm.invoke([
+    new SystemMessage(
+      [
+        buildRuntimePrompt(state, false),
+        "",
+        "Answer directly using the conversation history and runtime context.",
+      ].join("\n"),
+    ),
+    ...createConversationInput(state),
+  ]);
+  return extractText(response.content).trim();
+}
+
 export async function* streamSelectedAgentResponse(state: SelectedAgentRuntimeState) {
   const checkpointer = await getWorkflowCheckpointer();
+
   yield {
     type: "progress",
     progress: {
@@ -283,229 +244,157 @@ export async function* streamSelectedAgentResponse(state: SelectedAgentRuntimeSt
     type: "progress",
     progress: {
       id: "load-tools",
-      title: "Load Composio tools",
-      description:
-        state.agent.agent_info.allowed_toolkits.length > 0
-          ? `Restricting tool discovery to ${state.agent.agent_info.allowed_toolkits.join(", ")}.`
-          : "Using default Composio meta-tools for runtime discovery.",
+      title: "Load tools",
+      description: "Loading Composio tools.",
       status: "in-progress",
-      tools: state.agent.agent_info.allowed_toolkits,
     },
   } satisfies SelectedAgentStreamEvent;
 
-  const tools = await getComposioTools(state.user.id, state.agent.agent_info.allowed_toolkits);
+  const toolkits = state.agent.agent_info.allowed_toolkits;
+  const tools = await loadComposioTools(state.user.id, toolkits);
+
   yield {
     type: "progress",
     progress: {
       id: "load-tools",
-      title: "Load Composio tools",
+      title: "Load tools",
       description:
         tools.length > 0
-          ? `Loaded ${tools.length} Composio runtime tools.`
-          : "No Composio tools were loaded; continuing without external tools.",
+          ? `Loaded ${tools.length} tools.`
+          : "No tools loaded; continuing without external tools.",
       status: "completed",
-      tools: tools.map((tool) => tool.name),
+      tools: tools.map((t) => t.name),
     },
   } satisfies SelectedAgentStreamEvent;
 
-  const agent = createAgent({
-    model: llm,
+  const systemPrompt = buildRuntimePrompt(state, tools.length > 0);
+  const agent = createReactAgent({
+    llm,
     tools,
-    systemPrompt: buildRuntimePrompt(state),
-    checkpointer,
-    name: state.agent.slug,
+    checkpointSaver: checkpointer,
+    stateModifier: new SystemMessage(systemPrompt),
   });
 
-  const messages = await createAgentInputMessages(state, checkpointer);
-  const run = await agent.streamEvents(
-    { messages },
-    { version: "v3", configurable: { thread_id: state.session.threadId } },
-  );
+  const inputMessages = await createAgentInputMessages(state, checkpointer);
 
   yield {
     type: "progress",
     progress: {
       id: "generate-response",
       title: "Generate response",
-      description: "Running the agent loop and streaming the answer.",
+      description: "Running the agent loop.",
       status: "in-progress",
     },
   } satisfies SelectedAgentStreamEvent;
 
-  let hasToolCalls = false;
-  const queue: SelectedAgentStreamEvent[] = [];
-  const toolStatusPromises: Promise<void>[] = [];
-  let isDone = false;
-  let streamError: unknown;
-  let wakeQueue: (() => void) | null = null;
+  let finalText = "";
+  const activeToolIds = new Set<string>();
 
-  function push(event: SelectedAgentStreamEvent): void {
-    queue.push(event);
-    wakeQueue?.();
-    wakeQueue = null;
-  }
-
-  function waitForQueue(): Promise<void> {
-    return new Promise((resolve) => {
-      wakeQueue = resolve;
-    });
-  }
-
-  const messageTask = (async () => {
-    for await (const message of run.messages) {
-      for await (const text of message.text) {
-        push({ type: "token", text });
-      }
-    }
-  })();
-
-  const toolTask = (async () => {
-    for await (const call of run.toolCalls) {
-      hasToolCalls = true;
-      const toolId = `tool:${call.callId}`;
-
-      push({
-        type: "progress",
-        progress: {
-          id: "run-tools",
-          title: "Run tool calls",
-          description: "Executing selected Composio tool calls.",
-          status: "in-progress",
-        },
-      });
-      push({
-        type: "progress",
-        progress: {
-          id: toolId,
-          parent_id: "run-tools",
-          title: call.name,
-          description: "Executing tool call.",
-          status: "in-progress",
-          tools: [call.name],
-        },
-      });
-
-      const statusPromise = (async () => {
-        try {
-          const status = await call.status;
-          const error = await call.error;
-          push({
-            type: "progress",
-            progress: {
-              id: toolId,
-              parent_id: "run-tools",
-              title: call.name,
-              description:
-                status === "error"
-                  ? error ?? "Tool call failed."
-                  : "Tool call completed.",
-              status: status === "error" ? "failed" : "completed",
-              tools: [call.name],
-            },
-          });
-        } catch (error) {
-          push({
-            type: "progress",
-            progress: {
-              id: toolId,
-              parent_id: "run-tools",
-              title: call.name,
-              description: error instanceof Error ? error.message : "Tool call failed.",
-              status: "failed",
-              tools: [call.name],
-            },
-          });
+  try {
+    for await (const event of agent.streamEvents(
+      { messages: inputMessages },
+      { version: "v2", configurable: { thread_id: state.session.threadId } },
+    )) {
+      if (event.event === "on_chat_model_stream") {
+        const content = extractText(event.data?.chunk?.content);
+        if (content) {
+          yield { type: "token", text: content } satisfies SelectedAgentStreamEvent;
         }
-      })();
+      } else if (event.event === "on_tool_start") {
+        const toolId = `tool:${event.run_id}`;
+        activeToolIds.add(toolId);
+        yield {
+          type: "progress",
+          progress: {
+            id: toolId,
+            parent_id: "run-tools",
+            title: event.name,
+            description: `Calling ${event.name}.`,
+            status: "in-progress",
+            tools: [event.name],
+          },
+        } satisfies SelectedAgentStreamEvent;
 
-      toolStatusPromises.push(statusPromise);
-    }
+        if (activeToolIds.size === 1) {
+          yield {
+            type: "progress",
+            progress: {
+              id: "run-tools",
+              title: "Run tool calls",
+              description: "Executing tool calls.",
+              status: "in-progress",
+            },
+          } satisfies SelectedAgentStreamEvent;
+        }
+      } else if (event.event === "on_tool_end") {
+        const toolId = `tool:${event.run_id}`;
+        activeToolIds.delete(toolId);
+        yield {
+          type: "progress",
+          progress: {
+            id: toolId,
+            parent_id: "run-tools",
+            title: event.name,
+            description: "Tool call completed.",
+            status: "completed",
+            tools: [event.name],
+          },
+        } satisfies SelectedAgentStreamEvent;
 
-    await Promise.allSettled(toolStatusPromises);
-    if (hasToolCalls) {
-      push({
-        type: "progress",
-        progress: {
-          id: "run-tools",
-          title: "Run tool calls",
-          description: "Completed tool execution.",
-          status: "completed",
-        },
-      });
-    }
-  })();
-
-  void Promise.all([messageTask, toolTask, run.output])
-    .then(([, , output]) => {
-      const finalText = extractFinalAssistantText(output);
-      if (finalText) {
-        push({ type: "final", text: finalText });
+        if (activeToolIds.size === 0) {
+          yield {
+            type: "progress",
+            progress: {
+              id: "run-tools",
+              title: "Run tool calls",
+              description: "All tool calls completed.",
+              status: "completed",
+            },
+          } satisfies SelectedAgentStreamEvent;
+        }
+      } else if (event.event === "on_chain_end") {
+        const candidate = extractFinalAssistantText(event.data?.output);
+        if (candidate) finalText = candidate;
       }
-
-      push({
-        type: "progress",
-        progress: {
-          id: "generate-response",
-          title: "Generate response",
-          description: "Response generation completed.",
-          status: "completed",
-        },
-      });
-    })
-    .catch((error) => {
-      streamError = error;
-      push({
-        type: "progress",
-        progress: {
-          id: "generate-response",
-          title: "Generate response",
-          description: error instanceof Error ? error.message : "Agent run failed.",
-          status: "failed",
-        },
-      });
-    })
-    .finally(() => {
-      isDone = true;
-      wakeQueue?.();
-      wakeQueue = null;
-    });
-
-  while (!isDone || queue.length > 0) {
-    const event = queue.shift();
-    if (event) {
-      yield event;
-      continue;
     }
-
-    await waitForQueue();
+  } catch (error) {
+    yield {
+      type: "progress",
+      progress: {
+        id: "generate-response",
+        title: "Generate response",
+        description: error instanceof Error ? error.message : "Agent run failed.",
+        status: "failed",
+      },
+    } satisfies SelectedAgentStreamEvent;
+    throw error;
   }
 
-  if (streamError) {
-    throw streamError;
+  yield {
+    type: "progress",
+    progress: {
+      id: "generate-response",
+      title: "Generate response",
+      description: "Response generation completed.",
+      status: "completed",
+    },
+  } satisfies SelectedAgentStreamEvent;
+
+  if (finalText) {
+    yield { type: "final", text: finalText } satisfies SelectedAgentStreamEvent;
   }
 }
 
 export function extractText(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
+  if (typeof content === "string") return content;
 
   if (Array.isArray(content)) {
     return content
       .map((part) => {
-        if (typeof part === "string") {
-          return part;
-        }
-
-        if (
-          part &&
-          typeof part === "object" &&
-          "text" in part &&
-          typeof part.text === "string"
-        ) {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
           return part.text;
         }
-
         return "";
       })
       .join("");
@@ -515,39 +404,20 @@ export function extractText(content: unknown): string {
 }
 
 function extractFinalAssistantText(output: unknown): string {
-  if (!output || typeof output !== "object" || !("messages" in output)) {
-    return "";
-  }
+  if (!output || typeof output !== "object" || !("messages" in output)) return "";
 
   const messages = output.messages;
-  if (!Array.isArray(messages)) {
-    return "";
-  }
+  if (!Array.isArray(messages)) return "";
 
   const assistantMessage = [...messages].reverse().find(isAssistantMessage);
-  if (!assistantMessage || typeof assistantMessage !== "object") {
-    return "";
-  }
+  if (!assistantMessage || typeof assistantMessage !== "object") return "";
 
   return "content" in assistantMessage ? extractText(assistantMessage.content).trim() : "";
 }
 
 function isAssistantMessage(message: unknown): message is BaseMessage {
-  if (!message || typeof message !== "object") {
-    return false;
-  }
-
-  if (message instanceof AIMessage) {
-    return true;
-  }
-
-  if ("_getType" in message && typeof message._getType === "function") {
-    return message._getType() === "ai";
-  }
-
-  if ("role" in message && message.role === "assistant") {
-    return true;
-  }
-
+  if (!message || typeof message !== "object") return false;
+  if (message instanceof AIMessage) return true;
+  if ("role" in message && message.role === "assistant") return true;
   return "type" in message && message.type === "ai";
 }

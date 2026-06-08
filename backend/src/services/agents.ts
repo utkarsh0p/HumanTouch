@@ -26,7 +26,7 @@ type AgentWithAssignments = Prisma.AgentGetPayload<{
   include: typeof agentInclude;
 }>;
 
-const supportedToolkits = new Set(["gmail", "github"]);
+const supportedToolkits = new Set(["gmail", "github", "tavily"]);
 
 export function toAgentRecord(agent: AgentWithAssignments): AgentRecord {
   const assignedRoles = [
@@ -131,7 +131,7 @@ function normalizeStoredAgentInfo(value: Prisma.JsonValue, name: string): AgentI
             (toolkit): toolkit is string => typeof toolkit === "string",
           ),
         )
-      : [];
+      : normalizeToolkitList([]);
 
   return {
     ...baseInfo,
