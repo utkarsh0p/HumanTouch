@@ -4,7 +4,8 @@ import {
   SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
-import type { DynamicStructuredTool } from "@langchain/core/tools";
+import { DynamicStructuredTool } from "@langchain/core/tools";
+import { z } from "zod";
 import { ChatGoogle } from "@langchain/google/node";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
@@ -101,13 +102,37 @@ async function loadComposioTools(
       userId,
       toolkits.length > 0 ? { toolkits } : undefined,
     );
-    const tools = await session.tools();
-    console.info("[Composio] Loaded tools.", {
-      userId,
-      toolkits,
-      toolCount: tools.length,
+    const rawTools = await session.tools();
+    const tools = rawTools.filter(
+      (t) => (t as { name?: string }).name !== "COMPOSIO_MANAGE_CONNECTIONS",
+    );
+
+    const connectTool = new DynamicStructuredTool({
+      name: "connect_account",
+      description:
+        "Initiate an OAuth connection for a toolkit/app. Returns a redirect URL the user must open to authorize. Use this when a tool call fails due to a missing connection or when the user asks to connect an app.",
+      schema: z.object({
+        toolkit: z
+          .string()
+          .describe(
+            "The toolkit slug to connect, e.g. 'github', 'gmail', 'googlecalendar'",
+          ),
+      }),
+      func: async ({ toolkit }: { toolkit: string }) => {
+        try {
+          const connectionRequest = await session.authorize(toolkit);
+          const redirectUrl = connectionRequest.redirectUrl;
+          if (!redirectUrl)
+            return `No redirect URL returned for ${toolkit}. The account may already be connected.`;
+          return redirectUrl;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return `Failed to initiate connection for ${toolkit}: ${msg}`;
+        }
+      },
     });
-    return tools as DynamicStructuredTool[];
+
+    return [...tools, connectTool] as DynamicStructuredTool[];
   } catch (error) {
     console.warn("[Composio] Failed to load tools:", error);
     return [];
@@ -175,7 +200,8 @@ export function buildRuntimePrompt(
     parts.push(
       "",
       "You have access to Composio tools. Use them to complete the user's request.",
-      "If an app is not connected, use the connection tool to generate an OAuth link for the user.",
+      "If an app is not connected, use the connect_account tool with the toolkit slug to generate an OAuth link for the user.",
+      "If multiple accounts need connecting, list ALL connection links in a single response — one per service — do not ask the user to connect them one at a time.",
     );
   } else {
     parts.push(

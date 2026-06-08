@@ -441,34 +441,21 @@ export default function HomePage() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (!openAgentMenuId) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!agentMenuRef.current?.contains(event.target as Node)) {
-        setOpenAgentMenuId(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [openAgentMenuId]);
-
-  useEffect(() => {
-    if (!openSessionMenuId) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!sessionMenuRef.current?.contains(event.target as Node)) {
-        setOpenSessionMenuId(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [openSessionMenuId]);
+    const pairs: [boolean, React.RefObject<HTMLElement | null>, () => void][] = [
+      [!!openAgentMenuId, agentMenuRef, () => setOpenAgentMenuId(null)],
+      [!!openSessionMenuId, sessionMenuRef, () => setOpenSessionMenuId(null)],
+    ];
+    const cleanups = pairs
+      .filter(([open]) => open)
+      .map(([, ref, close]) => {
+        function handlePointerDown(event: MouseEvent) {
+          if (!ref.current?.contains(event.target as Node)) close();
+        }
+        document.addEventListener("mousedown", handlePointerDown);
+        return () => document.removeEventListener("mousedown", handlePointerDown);
+      });
+    return () => cleanups.forEach((fn) => fn());
+  }, [openAgentMenuId, openSessionMenuId]);
 
   useEffect(() => {
     if (!activeThreadId || !transcriptRef.current) {
