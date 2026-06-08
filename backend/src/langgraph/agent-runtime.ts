@@ -277,7 +277,7 @@ export async function* streamSelectedAgentResponse(state: SelectedAgentRuntimeSt
   } satisfies SelectedAgentStreamEvent;
 
   const toolkits = state.agent.agent_info.allowed_toolkits;
-  const tools = await loadComposioTools(state.user.id, toolkits);
+  const tools = await loadComposioTools(`${state.user.id}_${state.agent.id}`, toolkits);
 
   yield {
     type: "progress",
