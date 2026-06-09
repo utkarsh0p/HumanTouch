@@ -1,14 +1,21 @@
 "use client";
 
 import {
+  Calendar,
   CheckCircle2,
   ChevronDown,
-  Circle,
-  CircleAlert,
-  CircleDotDashed,
-  CircleX,
+  Globe,
+  HardDrive,
+  Link2,
+  Mail,
+  Search,
+  Sparkles,
+  Wrench,
+  Zap,
+  GitBranch,
 } from "lucide-react";
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import type { ReactNode } from "react";
 
 export type AgentPlanStatus =
   | "pending"
@@ -42,232 +49,286 @@ type AgentPlanProps = {
   tasks: AgentPlanTask[];
 };
 
-const statusLabels: Record<AgentPlanStatus, string> = {
-  pending: "pending",
-  "in-progress": "running",
-  completed: "done",
-  failed: "failed",
-  "need-help": "needs input",
+type StepInfo = {
+  icon: ReactNode;
+  presentLabel: string;
+  pastLabel: string;
+  isMetaTool: boolean;
 };
 
-function StatusIcon({ status }: { status: AgentPlanStatus }) {
-  if (status === "completed") {
-    return <CheckCircle2 className="size-4 text-[#8bbf8b]" />;
-  }
+// These are Composio infrastructure tools — hide them from the timeline
+const HIDDEN_TOOLS = new Set([
+  "COMPOSIO_MULTI_EXECUTE_TOOL",
+  "COMPOSIO_GET_TOOL_SCHEMAS",
+]);
 
-  if (status === "in-progress") {
-    return <CircleDotDashed className="size-4 animate-spin text-[#8fb6e8]" />;
-  }
+const META_TOOL_IDS = new Set([
+  "COMPOSIO_SEARCH_TOOLS",
+  "COMPOSIO_REMOTE_WORKBENCH",
+  "COMPOSIO_REMOTE_BASH_TOOL",
+]);
 
-  if (status === "need-help") {
-    return <CircleAlert className="size-4 text-[#e0bc71]" />;
-  }
+function getStepInfo(toolName: string): StepInfo {
+  const name = (toolName ?? "").toUpperCase();
+  const isMeta = META_TOOL_IDS.has(name);
 
-  if (status === "failed") {
-    return <CircleX className="size-4 text-[#e58f7e]" />;
+  if (name === "COMPOSIO_SEARCH_TOOLS") {
+    return { icon: <Search className="size-3.5" />, presentLabel: "Searching available tools", pastLabel: "Searched available tools", isMetaTool: true };
   }
-
-  return <Circle className="size-4 text-[#716a5f]" />;
+  if (name === "COMPOSIO_REMOTE_WORKBENCH") {
+    return { icon: <Zap className="size-3.5" />, presentLabel: "Running code", pastLabel: "Ran code", isMetaTool: true };
+  }
+  if (name === "COMPOSIO_REMOTE_BASH_TOOL") {
+    return { icon: <Zap className="size-3.5" />, presentLabel: "Running shell command", pastLabel: "Ran shell command", isMetaTool: true };
+  }
+  if (name === "COMPOSIO_MANAGE_CONNECTIONS") {
+    return { icon: <Link2 className="size-3.5" />, presentLabel: "Connecting account", pastLabel: "Generated connection link", isMetaTool: false };
+  }
+  if (name.startsWith("TAVILY")) {
+    return { icon: <Globe className="size-3.5" />, presentLabel: "Searching the web", pastLabel: "Searched the web", isMetaTool: false };
+  }
+  if (name.startsWith("GMAIL")) {
+    return { icon: <Mail className="size-3.5" />, presentLabel: "Using Gmail", pastLabel: "Used Gmail", isMetaTool: false };
+  }
+  if (name.startsWith("GITHUB")) {
+    return { icon: <GitBranch className="size-3.5" />, presentLabel: "Using GitHub", pastLabel: "Used GitHub", isMetaTool: false };
+  }
+  if (name.startsWith("GOOGLECALENDAR")) {
+    return { icon: <Calendar className="size-3.5" />, presentLabel: "Using Google Calendar", pastLabel: "Used Google Calendar", isMetaTool: false };
+  }
+  if (name.startsWith("GOOGLEDRIVE")) {
+    return { icon: <HardDrive className="size-3.5" />, presentLabel: "Using Google Drive", pastLabel: "Used Google Drive", isMetaTool: false };
+  }
+  return { icon: <Wrench className="size-3.5" />, presentLabel: toolName, pastLabel: toolName, isMetaTool: isMeta };
 }
 
-function statusClass(status: AgentPlanStatus): string {
-  if (status === "completed") {
-    return "border-[#536b55] text-[#a8c8a6]";
+type FlatStep = {
+  id: string;
+  toolName: string;
+  info: StepInfo;
+  status: AgentPlanStatus;
+};
+
+function extractSteps(tasks: AgentPlanTask[]): FlatStep[] {
+  const steps: FlatStep[] = [];
+
+  const genResponse = tasks.find((t) => t.id === "generate-response");
+  if (genResponse?.status === "in-progress") {
+    steps.push({
+      id: "thinking",
+      toolName: "thinking",
+      info: {
+        icon: <ThinkingIndicator />,
+        presentLabel: "Thinking…",
+        pastLabel: "Thought",
+        isMetaTool: true,
+      },
+      status: "in-progress",
+    });
   }
 
-  if (status === "in-progress") {
-    return "border-[#526982] text-[#a9c9ef]";
+  const runToolsTask = tasks.find((t) => t.id === "run-tools");
+  if (runToolsTask) {
+    const toolSteps = runToolsTask.subtasks
+      .filter((s) => {
+        if (s.status === "pending") return false;
+        const toolName = (s.tools?.[0] ?? s.title).toUpperCase();
+        return !HIDDEN_TOOLS.has(toolName);
+      })
+      .map((s) => {
+        const toolName = s.tools?.[0] ?? s.title;
+        return {
+          id: s.id,
+          toolName,
+          info: getStepInfo(toolName),
+          status: s.status,
+        };
+      });
+    steps.push(...toolSteps);
   }
 
-  if (status === "need-help") {
-    return "border-[#7a6a45] text-[#d2bd7a]";
-  }
-
-  if (status === "failed") {
-    return "border-[#83534a] text-[#e29c8e]";
-  }
-
-  return "border-white/8 text-[#8f8778]";
+  return steps;
 }
 
-function collectTools(tasks: AgentPlanTask[]): string[] {
-  const tools = new Set<string>();
+function getCurrentActionLabel(tasks: AgentPlanTask[], steps: FlatStep[]): string {
+  const inProgress = steps.find((s) => s.status === "in-progress");
+  if (inProgress && inProgress.id !== "thinking") return inProgress.info.presentLabel;
 
-  for (const task of tasks) {
-    task.tools?.forEach((tool) => tools.add(tool));
-    task.subtasks.forEach((subtask) => subtask.tools?.forEach((tool) => tools.add(tool)));
-  }
+  const loadTools = tasks.find((t) => t.id === "load-tools");
+  if (loadTools?.status === "in-progress") return "Preparing…";
 
-  return [...tools];
+  return "Working…";
+}
+
+function buildSummary(steps: FlatStep[]): string {
+  const completed = steps.filter((s) => s.status === "completed");
+  const unique = [...new Set(completed.map((s) => s.info.pastLabel))];
+  if (unique.length === 0) return "Agent work";
+  if (unique.length === 1) return unique[0];
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`;
+  return `${unique[0]}, ${unique[1]} +${unique.length - 2} more`;
+}
+
+function PulsingDot() {
+  return (
+    <span className="relative flex size-1.5">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8fb6e8] opacity-60" />
+      <span className="relative inline-flex size-1.5 rounded-full bg-[#8fb6e8]" />
+    </span>
+  );
+}
+
+function ThinkingIndicator() {
+  return <span className="size-2.5 rounded-full bg-white" />;
 }
 
 export function AgentPlan({
-  agentName,
   isExpanded,
   isRunning,
   onToggleExpanded,
   tasks,
 }: AgentPlanProps) {
   const reduceMotion = useReducedMotion();
-  const visibleTasks = tasks.length > 0 ? tasks : [];
+  const steps = extractSteps(tasks);
+  const hasAnyWork = steps.length > 0;
 
-  if (visibleTasks.length === 0) {
-    return null;
-  }
+  if (!hasAnyWork && !isRunning) return null;
 
-  const toolNames = collectTools(visibleTasks);
-  const shouldShowTimeline = isRunning || isExpanded;
-  const stateLabel = isRunning ? "running" : "complete";
-  const summary =
-    toolNames.length > 0
-      ? `${visibleTasks.length} steps · ${toolNames.length} tools`
-      : `${visibleTasks.length} steps`;
+  const currentActionLabel = getCurrentActionLabel(tasks, steps);
+  const summary = buildSummary(steps);
+  const showTimeline = isRunning || isExpanded;
 
   return (
-    <motion.section
-      animate={{ opacity: 1, y: 0 }}
-      className="mt-3 overflow-hidden rounded-xl border border-white/8 bg-[#1c1a17]/70 text-[#ddd7ca]"
-      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
-      transition={{ duration: reduceMotion ? 0.12 : 0.24 }}
-    >
+    <div className="mb-2">
+      {/* Header row */}
       <button
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition hover:bg-white/[0.03]"
+        className="group flex items-center gap-1.5 py-0.5 text-left"
         onClick={onToggleExpanded}
         type="button"
       >
-        <div className="flex min-w-0 items-center gap-2.5">
-          <StatusIcon status={isRunning ? "in-progress" : "completed"} />
-          <div className="min-w-0">
-            <p className="truncate text-xs text-[#f0e8dc]">
-              Agent work {stateLabel}
-            </p>
-            <p className="mt-0.5 truncate text-[11px] text-[#8f8778]">
-              {agentName ? `${agentName} · ${summary}` : summary}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {toolNames.slice(0, 2).map((tool) => (
-            <span
-              className="hidden rounded-full border border-white/8 px-2 py-0.5 text-[10px] text-[#a9a195] sm:inline"
-              key={tool}
+        {isRunning ? (
+          <>
+            <motion.span
+              animate={{ rotate: 360 }}
+              className="text-[#d97757]"
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
             >
-              {tool}
-            </span>
-          ))}
-          <ChevronDown
-            className={`size-4 text-[#9f9788] transition ${
-              shouldShowTimeline ? "rotate-180" : ""
-            }`}
-          />
-        </div>
+              <Sparkles className="size-3.5" />
+            </motion.span>
+            <span className="text-sm font-medium text-[#ddd7ca]">Working</span>
+            <span className="mx-0.5 text-[#4a4640]">·</span>
+            <span className="text-xs text-[#7a7368]">{currentActionLabel}</span>
+          </>
+        ) : (
+          <>
+            <CheckCircle2 className="size-3.5 text-[#6aaa6a]" />
+            <span className="text-sm text-[#a8a098]">{summary}</span>
+            <ChevronDown
+              className={`size-3.5 text-[#5a5650] transition-transform ${isExpanded ? "rotate-180" : ""}`}
+            />
+          </>
+        )}
       </button>
 
+      {/* Timeline */}
       <AnimatePresence initial={false}>
-        {shouldShowTimeline ? (
+        {showTimeline && (
           <motion.div
             animate={{ height: "auto", opacity: 1 }}
-            className="border-t border-white/6"
+            className="overflow-hidden"
             exit={{ height: 0, opacity: 0 }}
             initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0.12 : 0.2 }}
+            transition={{ duration: reduceMotion ? 0.1 : 0.2 }}
           >
-            <LayoutGroup>
-              <ul className="max-h-64 space-y-1 overflow-y-auto px-3 py-2.5 ht-scroll-region">
-                <AnimatePresence initial={false}>
-                  {visibleTasks.map((task) => (
-                    <motion.li
-                      animate={{ opacity: 1, y: 0 }}
-                      className="rounded-lg px-1.5 py-1.5"
-                      exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
-                      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
-                      key={task.id}
-                      layout
-                      transition={{ duration: reduceMotion ? 0.12 : 0.2 }}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <span className="mt-0.5 shrink-0">
-                          <StatusIcon status={task.status} />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center justify-between gap-3">
-                            <p className="truncate text-sm text-[#f0e8dc]">{task.title}</p>
-                            <span
-                              className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${statusClass(
-                                task.status,
-                              )}`}
-                            >
-                              {statusLabels[task.status]}
-                            </span>
-                          </div>
-                          {task.description ? (
-                            <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-[#948d80]">
-                              {task.description}
-                            </p>
-                          ) : null}
-                          {task.tools && task.tools.length > 0 ? (
-                            <div className="mt-1.5 flex flex-wrap gap-1.5">
-                              {task.tools.map((tool) => (
-                                <span
-                                  className="rounded-full border border-white/8 bg-[#1d1b18] px-2 py-0.5 text-[10px] text-[#a9a195]"
-                                  key={tool}
-                                >
-                                  {tool}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
+            <div className="mt-2 pl-0.5">
+              <AnimatePresence initial={false}>
+                {steps.map((step, i) => {
+                  const isLast = i === steps.length - 1 && !isRunning;
+                  const isDone = step.status === "completed";
+                  const isFailed = step.status === "failed";
+                  const isActive = step.status === "in-progress";
 
-                          {task.subtasks.length > 0 ? (
-                            <ul className="mt-2 space-y-1 border-l border-dashed border-white/10 pl-3">
-                              {task.subtasks.map((subtask) => (
-                                <motion.li
-                                  animate={{ opacity: 1, x: 0 }}
-                                  className="flex items-start gap-2 rounded-lg py-1"
-                                  initial={{ opacity: 0, x: reduceMotion ? 0 : -6 }}
-                                  key={subtask.id}
-                                  layout
-                                  transition={{ duration: reduceMotion ? 0.12 : 0.18 }}
-                                >
-                                  <span className="mt-0.5 shrink-0">
-                                    <StatusIcon status={subtask.status} />
-                                  </span>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-xs text-[#d8d1c4]">
-                                      {subtask.title}
-                                    </p>
-                                    {subtask.description ? (
-                                      <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-[#8f8778]">
-                                        {subtask.description}
-                                      </p>
-                                    ) : null}
-                                    {subtask.tools && subtask.tools.length > 0 ? (
-                                      <div className="mt-1 flex flex-wrap gap-1">
-                                        {subtask.tools.map((tool) => (
-                                          <span
-                                            className="rounded-full border border-white/8 px-1.5 py-0.5 text-[10px] text-[#a9a195]"
-                                            key={tool}
-                                          >
-                                            {tool}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                </motion.li>
-                              ))}
-                            </ul>
-                          ) : null}
+                  return (
+                    <motion.div
+                      animate={{ opacity: 1, y: 0 }}
+                      className="relative flex gap-3"
+                      exit={{ opacity: 0 }}
+                      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
+                      key={step.id}
+                      transition={{ duration: 0.18 }}
+                    >
+                      {/* Icon + vertical line */}
+                      <div className="relative flex shrink-0 flex-col items-center">
+                        <span
+                          className={`mt-[3px] ${
+                            isDone
+                              ? "text-[#6aaa6a]"
+                              : isFailed
+                                ? "text-[#e58f7e]"
+                                : isActive
+                                  ? "text-[#7aaee8]"
+                                  : "text-[#5a5650]"
+                          }`}
+                        >
+                          {step.info.icon}
+                        </span>
+                        {!isLast && (
+                          <motion.span
+                            animate={{ scaleY: 1 }}
+                            className="mt-1 w-px flex-1 bg-white/[0.08]"
+                            initial={{ scaleY: 0 }}
+                            style={{ minHeight: "1.25rem", transformOrigin: "top" }}
+                            transition={{ duration: 0.35, ease: "easeOut" }}
+                          />
+                        )}
+                      </div>
+
+                      {/* Content */}
+                      <div className="min-w-0 flex-1 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-xs ${
+                              isDone
+                                ? "text-[#b0a898]"
+                                : isFailed
+                                  ? "text-[#e29c8e]"
+                                  : "text-[#c8c0b4]"
+                            }`}
+                          >
+                            {isDone ? step.info.pastLabel : step.info.presentLabel}
+                          </span>
+                          {isActive && <PulsingDot />}
+                          {isFailed && (
+                            <span className="rounded border border-[#83534a]/60 px-1.5 py-px text-[10px] text-[#e29c8e]">
+                              failed
+                            </span>
+                          )}
                         </div>
                       </div>
-                    </motion.li>
-                  ))}
-                </AnimatePresence>
-              </ul>
-            </LayoutGroup>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+
+              {/* Done row */}
+              <AnimatePresence>
+                {!isRunning && steps.length > 0 && (
+                  <motion.div
+                    animate={{ opacity: 1 }}
+                    className="flex items-center gap-3"
+                    exit={{ opacity: 0 }}
+                    initial={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <CheckCircle2 className="mt-[2px] size-3.5 shrink-0 text-[#6aaa6a]" />
+                    <span className="text-xs text-[#6a6460]">Done</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </motion.div>
-        ) : null}
+        )}
       </AnimatePresence>
-    </motion.section>
+    </div>
   );
 }

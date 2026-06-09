@@ -56,6 +56,8 @@ const envSchema = z
     GOOGLE_API_KEY: z.string().optional(),
     GEMINI_MODEL: z.string().min(1).default("gemini-2.5-pro"),
     COMPOSIO_API_KEY: z.string().optional(),
+    COMPOSIO_TAVILY_AUTH_CONFIG_ID: z.string().optional(),
+    TAVILY_API_KEY: z.string().optional(),
     ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
     FRONTEND_BASE_URL: z.string().url().optional(),
   })
@@ -74,6 +76,8 @@ const envSchema = z
       googleApiKey,
       geminiModel: env.GEMINI_MODEL,
       composioApiKey: env.COMPOSIO_API_KEY,
+      composioTavilyAuthConfigId: env.COMPOSIO_TAVILY_AUTH_CONFIG_ID?.trim(),
+      tavilyApiKey: env.TAVILY_API_KEY?.trim(),
       allowedOrigins: expandAllowedOrigins(
         includeCommonDevOrigins(
           env.ALLOWED_ORIGINS.split(",")

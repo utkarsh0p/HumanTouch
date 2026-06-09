@@ -1,20 +1,17 @@
 import type { AgentInfo } from "../types/agents.js";
 
 export function buildAgentContext(name: string, agentInfo: AgentInfo): string {
-  const toolkits = agentInfo.allowed_toolkits;
-  const toolBlock =
-    toolkits.length > 0
-      ? [
-          "",
-          "External tool access:",
-          `You may use Composio tools only from these toolkits: ${toolkits.join(", ")}.`,
-          "If a selected toolkit requires authentication, use the provided Composio connection flow and ask the user to connect their account.",
-        ]
-      : [
-          "",
-          "External tool access:",
-          "You may use Composio meta-tools to discover and use available external toolkits. Use the Composio connection flow when authentication is required.",
-        ];
+  const toolkitList = agentInfo.allowed_toolkits ?? [];
+  const toolkitSummary =
+    toolkitList.length > 0
+      ? `Available external toolkits: ${toolkitList.join(", ")}.`
+      : "All connected external toolkits are available.";
+  const toolBlock = [
+    "",
+    "External tool access:",
+    toolkitSummary,
+    "If a toolkit requires authentication, use the Composio connection tool to generate an OAuth link for the user.",
+  ];
   const workspaceBlock = [
     "",
     "Workspace mode:",

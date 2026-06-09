@@ -5,9 +5,7 @@ import {
   ArrowUp,
   Bot,
   ChevronDown,
-  GitBranch,
   LogOut,
-  Mail,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -54,7 +52,7 @@ type Agent = {
     permissions: string;
     guardrails: string;
     work_style: string;
-    allowed_toolkits: AgentToolkit[];
+    allowed_toolkits: string[];
     allowed_tool_ids: string[];
     workspace: {
       mode: "chat" | "agentic";
@@ -74,8 +72,6 @@ type Agent = {
   assigned_user_ids: string[];
   assigned_user_emails: string[];
 };
-
-type AgentToolkit = "gmail" | "github";
 
 type ChatMessage = {
   id: string;
@@ -144,23 +140,6 @@ function resolveApiBaseUrl(): string {
 
 const apiBaseUrl = resolveApiBaseUrl();
 
-const toolkitOptions: Array<{
-  id: AgentToolkit;
-  label: string;
-  description: string;
-}> = [
-  {
-    id: "gmail",
-    label: "Gmail",
-    description: "Email search, drafts, and sending through the user's connected Gmail account.",
-  },
-  {
-    id: "github",
-    label: "GitHub",
-    description: "Repository, issue, pull request, and developer workflow actions.",
-  },
-];
-
 function sanitizeLinkTarget(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -176,29 +155,24 @@ function renderInlineMarkdown(text: string): ReactNode[] {
   let key = 0;
 
   while (index < text.length) {
-    if (text[index] === "[") {
-      const labelEnd = text.indexOf("]", index + 1);
-      if (labelEnd !== -1 && text[labelEnd + 1] === "(") {
-        const urlEnd = text.indexOf(")", labelEnd + 2);
-        if (urlEnd !== -1) {
-          const label = text.slice(index + 1, labelEnd);
-          const href = sanitizeLinkTarget(text.slice(labelEnd + 2, urlEnd));
-          if (href) {
-            nodes.push(
-              <a
-                key={`link-${key++}`}
-                className="text-[#f0b2a7] underline decoration-[#f0b2a7]/40 underline-offset-4 hover:text-[#ffc1b7]"
-                href={href}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {renderInlineMarkdown(label)}
-              </a>,
-            );
-            index = urlEnd + 1;
-            continue;
-          }
-        }
+    const mdLinkMatch = text.slice(index).match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/);
+    if (mdLinkMatch) {
+      const label = mdLinkMatch[1];
+      const href = sanitizeLinkTarget(mdLinkMatch[2]);
+      if (href) {
+        nodes.push(
+          <a
+            key={`link-${key++}`}
+            className="font-medium text-blue-400 underline decoration-blue-400/40 underline-offset-4 hover:text-blue-300"
+            href={href}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {label}
+          </a>,
+        );
+        index += mdLinkMatch[0].length;
+        continue;
       }
     }
 
@@ -211,7 +185,7 @@ function renderInlineMarkdown(text: string): ReactNode[] {
         nodes.push(
           <a
             key={`url-${key++}`}
-            className="break-all text-[#f0b2a7] underline decoration-[#f0b2a7]/40 underline-offset-4 hover:text-[#ffc1b7]"
+            className="break-all font-medium text-blue-400 underline decoration-blue-400/40 underline-offset-4 hover:text-blue-300"
             href={href}
             rel="noreferrer"
             target="_blank"
@@ -387,7 +361,6 @@ export default function HomePage() {
   const [agentAllowedTasks, setAgentAllowedTasks] = useState("");
   const [agentRestrictions, setAgentRestrictions] = useState("");
   const [employeeEmailDraft, setEmployeeEmailDraft] = useState("");
-  const [selectedToolkits, setSelectedToolkits] = useState<AgentToolkit[]>([]);
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isAgentListOpen, setIsAgentListOpen] = useState(false);
@@ -468,34 +441,21 @@ export default function HomePage() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (!openAgentMenuId) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!agentMenuRef.current?.contains(event.target as Node)) {
-        setOpenAgentMenuId(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [openAgentMenuId]);
-
-  useEffect(() => {
-    if (!openSessionMenuId) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!sessionMenuRef.current?.contains(event.target as Node)) {
-        setOpenSessionMenuId(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [openSessionMenuId]);
+    const pairs: [boolean, React.RefObject<HTMLElement | null>, () => void][] = [
+      [!!openAgentMenuId, agentMenuRef, () => setOpenAgentMenuId(null)],
+      [!!openSessionMenuId, sessionMenuRef, () => setOpenSessionMenuId(null)],
+    ];
+    const cleanups = pairs
+      .filter(([open]) => open)
+      .map(([, ref, close]) => {
+        function handlePointerDown(event: MouseEvent) {
+          if (!ref.current?.contains(event.target as Node)) close();
+        }
+        document.addEventListener("mousedown", handlePointerDown);
+        return () => document.removeEventListener("mousedown", handlePointerDown);
+      });
+    return () => cleanups.forEach((fn) => fn());
+  }, [openAgentMenuId, openSessionMenuId]);
 
   useEffect(() => {
     if (!activeThreadId || !transcriptRef.current) {
@@ -571,7 +531,6 @@ export default function HomePage() {
     setAgentAllowedTasks("");
     setAgentRestrictions("");
     setEmployeeEmailDraft("");
-    setSelectedToolkits([]);
   }
 
   function mergeAgentProgress(
@@ -662,19 +621,10 @@ export default function HomePage() {
     setAgentAllowedTasks(agent.agent_info.responsibilities ?? "");
     setAgentRestrictions(agent.agent_info.guardrails ?? "");
     setEmployeeEmailDraft(agent.assigned_user_emails.join(", "));
-    setSelectedToolkits(agent.agent_info.allowed_toolkits ?? []);
     setEditingAgentId(agent.id);
     setAgentFormMode("edit");
     setOpenAgentMenuId(null);
     setIsAgentFormOpen(true);
-  }
-
-  function toggleToolkit(toolkit: AgentToolkit) {
-    setSelectedToolkits((current) =>
-      current.includes(toolkit)
-        ? current.filter((currentToolkit) => currentToolkit !== toolkit)
-        : [...current, toolkit],
-    );
   }
 
   function startRenamingSession(session: Session) {
@@ -1288,6 +1238,21 @@ export default function HomePage() {
       return parsed.detail ?? "Streaming failed.";
     }
 
+    if (eventName === "final") {
+      const parsed = JSON.parse(payload) as { text: string };
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current;
+      if (activeAssistantMessageId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === activeAssistantMessageId
+              ? { ...message, content: parsed.text }
+              : message,
+          ),
+        );
+      }
+      return null;
+    }
+
     if (eventName === "done") {
       const parsed = JSON.parse(payload) as { thread_id?: string; title?: string };
       const activeAssistantMessageId = activeAssistantMessageIdRef.current;
@@ -1353,7 +1318,6 @@ export default function HomePage() {
           purpose: agentPurpose,
           allowed_tasks: agentAllowedTasks,
           restrictions: agentRestrictions,
-          allowed_toolkits: selectedToolkits,
           ...(!isEditingSystemAgent
             ? {
                 assigned_user_emails: employeeEmailDraft
@@ -1745,55 +1709,6 @@ export default function HomePage() {
                       value={employeeEmailDraft}
                     />
                   ) : null}
-                  <div className="rounded-2xl border border-white/8 bg-[#1e1b18] p-3">
-	                    <div className="mb-3 flex items-center justify-between gap-3">
-	                      <p className="text-sm text-[#f2ede3]">Toolkits</p>
-	                      <span className="text-[11px] text-[#8f8778]">
-	                        {selectedToolkits.length > 0
-	                          ? `${selectedToolkits.length} selected`
-	                          : "All discoverable"}
-	                      </span>
-	                    </div>
-	                    <p className="mb-3 text-xs leading-5 text-[#8f8778]">
-	                      Select toolkits to restrict this agent. Leave blank to allow Composio
-	                      meta-tools to discover available toolkits at runtime.
-	                    </p>
-	                    <div className="grid gap-2 sm:grid-cols-2">
-                      {toolkitOptions.map((toolkit) => {
-                        const isSelected = selectedToolkits.includes(toolkit.id);
-                        const Icon = toolkit.id === "gmail" ? Mail : GitBranch;
-
-                        return (
-                          <button
-                            key={toolkit.id}
-                            className={`flex min-h-24 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
-                              isSelected
-                                ? "border-[#f0b2a7]/70 bg-[#332722] text-[#f4e6de]"
-                                : "border-white/8 bg-[#24211d] text-[#bbb4a7] hover:bg-[#2b2824]"
-                            }`}
-                            onClick={() => toggleToolkit(toolkit.id)}
-                            type="button"
-                          >
-                            <span
-                              className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
-                                isSelected
-                                  ? "border-[#f0b2a7]/60 bg-[#4b312a] text-[#ffd0c6]"
-                                  : "border-white/10 bg-[#1e1b18] text-[#928a7c]"
-                              }`}
-                            >
-                              <Icon className="size-4" />
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block text-sm font-medium">{toolkit.label}</span>
-                              <span className="mt-1 block text-xs leading-5 text-[#8f8778]">
-                                {toolkit.description}
-                              </span>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
                 </div>
                 <div className="mt-5 flex shrink-0 items-center justify-between gap-3">
                   <button
@@ -2240,15 +2155,17 @@ export default function HomePage() {
                       {displayMessages.map(({ message, index }) => (
                         <article
                           key={message.id}
-                          className={`rounded-[1.4rem] px-4 py-3.5 sm:px-5 ${
+                          className={
                             message.role === "user"
-                              ? "ml-auto max-w-[84%] bg-[#2b2824] text-[#ece5d8] sm:max-w-[74%]"
-                              : "mr-auto max-w-full border border-white/6 bg-[#23211d] text-[#d7d1c5] sm:max-w-[84%]"
-                          }`}
+                              ? "ml-auto max-w-[84%] rounded-[1.4rem] bg-[#2b2824] px-4 py-3.5 text-[#ece5d8] sm:max-w-[74%] sm:px-5"
+                              : "w-full py-1 text-[#d7d1c5]"
+                          }
                         >
-                          <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-[#8e8678]">
-                            {message.role}
-                          </p>
+                          {message.role === "user" && (
+                            <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-[#8e8678]">
+                              {message.role}
+                            </p>
+                          )}
                           {message.role === "assistant" ? (
                             <div className="space-y-3 text-[0.94rem] text-[#ddd7ca]">
                               {message.run ? (

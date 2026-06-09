@@ -127,11 +127,16 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const streamedText = assistantParts.join("").trim();
-      let assistantText = streamedText || finalAssistantText.trim();
+      const resolvedFinalText = finalAssistantText.trim();
+      let assistantText = resolvedFinalText || streamedText;
       if (!assistantText) {
         assistantText = (await generateDirectAgentResponse(runtimeState)) || emptyAssistantFallback;
       }
-      if (!streamedText && assistantText) {
+
+      // If the full final text differs from what was streamed, replace it in the UI
+      if (assistantText && assistantText !== streamedText) {
+        writeSseEvent(reply.raw, "final", { text: assistantText });
+      } else if (!streamedText && assistantText) {
         writeSseEvent(reply.raw, "token", { text: assistantText });
       }
 

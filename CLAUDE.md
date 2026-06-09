@@ -1,4 +1,4 @@
-# AGENTS.md
+# CLAUDE.md
 
 ## Project
 
@@ -115,10 +115,10 @@ Future orchestration direction:
 Current UI is implemented:
 
 - sidebar for sessions and agent selection
-- main chat area with markdown rendering, clickable links
+- main chat area with markdown rendering
 - current agent indicator in header
-- **AgentPlan live timeline** — shows real-time agent steps while running, auto-collapses to summary when done
-- assistant messages are transparent/full-width; user messages are bubble-style
+- **AgentPlan live timeline** — animated step-by-step view of what the agent is doing while running; auto-collapses to a summary when done, user can re-expand
+- assistant messages are transparent/full-width, user messages are bubbles
 
 Provider/account UX:
 
@@ -164,17 +164,39 @@ Keep the backend as a single Node.js service.
 - keep company scoping explicit in backend queries
 - use request user context consistently
 - build LangGraph runtime state in backend services before graph execution
-- **do NOT manually orchestrate tool calls** — the LLM's ReAct loop owns all tool decisions
+- do NOT manually orchestrate tool calls — let the LLM's ReAct loop decide which tools to use and when
 - register tools centrally and bind only each selected agent's allowed tools at runtime
 
-## Tool Integration Rules
+## Tool Integration (Composio + LangGraph)
 
-- tool execution uses the official Composio + LangGraph ReAct pattern — `composio.create()` → `session.tools()` → `createReactAgent()`
-- **never** go back to manual tool execution, pre-searching tools, or app-level tool dispatch — this caused hallucinations and broken context in the old implementation
-- `allowed_toolkits` on each agent scopes which Composio toolkits load; empty list = all connected toolkits
-- to add a new supported toolkit: add to `supportedToolkits` in `backend/src/services/agents.ts` and `allowedToolkitSchema` in `backend/src/routes/agents.ts`
-- toolkit names in prompts are derived from `agentInfo.allowed_toolkits` dynamically — do not hardcode toolkit names in system prompts
-- Composio handles all OAuth connection flows — the agent calls `COMPOSIO_MANAGE_CONNECTIONS` automatically when a user needs to connect an account
+The official Composio pattern is used — no manual tool orchestration:
+
+```
+session = composio.create(userId, { toolkits })   // scoped to agent's allowed_toolkits
+tools   = session.tools()                          // returns LangChain-compatible tools
+agent   = createReactAgent({ llm, tools, checkpointSaver })
+agent.streamEvents(...)                            // LLM decides all tool use
+```
+
+Key rules:
+- `backend/src/langgraph/agent-runtime.ts` is the single agent execution entry point
+- `loadComposioTools(userId, toolkits)` loads tools per request — no caching, no session reuse
+- if `allowed_toolkits` is empty on an agent, Composio loads **all** connected toolkits for that user
+- Composio meta tools (`COMPOSIO_MANAGE_CONNECTIONS`, `COMPOSIO_SEARCH_TOOLS`) are included automatically — the LLM uses them to connect accounts and find tools
+- `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_GET_TOOL_SCHEMAS` are hidden from the UI timeline (internal infrastructure)
+- to add a new toolkit: add it to `supportedToolkits` in `services/agents.ts` and `allowedToolkitSchema` in `routes/agents.ts`
+
+## SSE Streaming Protocol
+
+The `/api/chat/stream` endpoint streams these events:
+
+- `token` — partial text chunk to append to the message
+- `progress` — agent workflow step update (feeds the AgentPlan timeline)
+- `final` — complete final text to replace streamed content (sent when final differs from streamed)
+- `done` — stream complete; includes thread_id and title
+- `error` — stream failed
+
+Progress events have: `id`, `title`, `status` (`in-progress` / `completed` / `failed`), optional `parent_id` (for tool subtasks under `run-tools`), optional `tools` array.
 
 ## Auth and Provider Integrations
 
