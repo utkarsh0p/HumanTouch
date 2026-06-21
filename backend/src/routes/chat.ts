@@ -113,6 +113,12 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           continue;
         }
 
+        if (event.type === "reset") {
+          assistantParts.length = 0;
+          writeSseEvent(reply.raw, "reset", {});
+          continue;
+        }
+
         if (event.type === "final") {
           finalAssistantText = event.text;
           continue;

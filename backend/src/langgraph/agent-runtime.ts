@@ -33,6 +33,7 @@ let composioClient: Composio<LangchainProvider> | null = null;
 export type SelectedAgentStreamEvent =
   | { type: "token"; text: string }
   | { type: "final"; text: string }
+  | { type: "reset" }
   | { type: "progress"; progress: AgentProgressEvent };
 
 export type SelectedAgentRuntimeState = {
@@ -200,8 +201,9 @@ export function buildRuntimePrompt(
     parts.push(
       "",
       "You have access to Composio tools. Use them to complete the user's request.",
-      "If an app is not connected, use the connect_account tool with the toolkit slug to generate an OAuth link for the user.",
-      "If multiple accounts need connecting, list ALL connection links in a single response — one per service — do not ask the user to connect them one at a time.",
+      "If a toolkit is not connected, you MUST call the COMPOSIO_MANAGE_CONNECTIONS tool (passing the toolkit slug, e.g. \"gmail\") to obtain a real OAuth `redirectUrl`. Only present links that this tool returned to you in its output.",
+      "NEVER fabricate, guess, or hand-write Composio URLs. Real Composio connection links look like `https://connect.composio.dev/link/lk_...` (or `https://backend.composio.dev/...`). Do NOT invent links under `app.composio.dev/api/v1/oauth/...` — that endpoint does not exist and will 404.",
+      "If multiple accounts need connecting, call COMPOSIO_MANAGE_CONNECTIONS once per toolkit and list ALL returned redirect URLs in a single response — one per service — do not ask the user to connect them one at a time.",
     );
   } else {
     parts.push(
@@ -319,9 +321,15 @@ export async function* streamSelectedAgentResponse(state: SelectedAgentRuntimeSt
   try {
     for await (const event of agent.streamEvents(
       { messages: inputMessages },
-      { version: "v2", configurable: { thread_id: state.session.threadId } },
+      {
+        version: "v2",
+        configurable: { thread_id: state.session.threadId },
+        recursionLimit: 30,
+      },
     )) {
-      if (event.event === "on_chat_model_stream") {
+      if (event.event === "on_chat_model_start") {
+        yield { type: "reset" } satisfies SelectedAgentStreamEvent;
+      } else if (event.event === "on_chat_model_stream") {
         const content = extractText(event.data?.chunk?.content);
         if (content) {
           yield { type: "token", text: content } satisfies SelectedAgentStreamEvent;

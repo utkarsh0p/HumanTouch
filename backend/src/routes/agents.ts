@@ -2,16 +2,33 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { ensureAdmin, getAccessibleAgents } from "../services/access.js";
-import { archiveAgent, createAgent, updateAgent } from "../services/agents.js";
+import {
+  archiveAgent,
+  createAgent,
+  defaultAllowedToolkits,
+  updateAgent,
+} from "../services/agents.js";
 
-const allowedToolkitSchema = z.enum(["gmail", "github", "tavily"]);
+const allowedToolkitSchema = z.enum([
+  "gmail",
+  "googlecalendar",
+  "googledocs",
+  "googledrive",
+  "googlesheets",
+  "github",
+  "slack",
+  "notion",
+  "linear",
+  "tavily",
+  "hubspot",
+]);
 
 const createAgentSchema = z.object({
   name: z.string().trim().min(1),
   purpose: z.string().trim().min(1),
   allowed_tasks: z.string().trim().min(1),
   restrictions: z.string().trim().min(1),
-  allowed_toolkits: z.array(allowedToolkitSchema).default([]),
+  allowed_toolkits: z.array(allowedToolkitSchema).default([...defaultAllowedToolkits]),
   assigned_role_keys: z.array(z.string().trim().min(1)).default([]),
   assigned_user_emails: z.array(z.string().trim().email()).default([]),
 });

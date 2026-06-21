@@ -5,6 +5,7 @@ import {
   defaultAdminAgentId,
   defaultAdminUserId,
   defaultCompanyId,
+  defaultEmployeeAgentId,
 } from "../constants/seed.js";
 import { runMigrations } from "./migrations.js";
 import { buildAgentContext } from "../services/agent-context.js";
@@ -431,7 +432,7 @@ async function seedDefaultCompanyAndUser(appSchema: string): Promise<void> {
       ON CONFLICT (id) DO UPDATE
       SET name = EXCLUDED.name, slug = EXCLUDED.slug, updated_at = EXCLUDED.updated_at
     `,
-    [defaultCompanyId, "HumanTouch Demo Company", "humantouch-demo", now],
+    [defaultCompanyId, "CemberAI Demo Company", "cemberai-demo", now],
   );
 
   await pool.query(
@@ -685,7 +686,7 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   const now = new Date();
   const baseInfo = {
     role: "Admin",
-    goal: "Manage HumanTouch agent operations for the company, plan work, and oversee system use.",
+    goal: "Manage CemberAI agent operations for the company, plan work, and oversee system use.",
     responsibilities:
       "Review requests, plan execution, coordinate work, inspect architecture, and support future agent management decisions.",
     permissions:
@@ -702,7 +703,7 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
     workspace: {
       mode: "agentic" as const,
       objective:
-        "Operate the admin workspace for HumanTouch and help manage agent setup, review, and operational decisions.",
+        "Operate the admin workspace for CemberAI and help manage agent setup, review, and operational decisions.",
       primary_deliverables:
         "Produce plans, agent definitions, prompt guidance, and operational recommendations that the admin can act on.",
       collaboration_notes:
@@ -797,6 +798,108 @@ async function seedDefaultAdminAgent(appSchema: string): Promise<void> {
   );
 }
 
+async function seedDefaultEmployeeAgent(appSchema: string): Promise<void> {
+  const now = new Date();
+  const baseInfo = {
+    role: "Assistant",
+    goal: "Help employees with their day-to-day tasks, answer questions, draft content, and support their work.",
+    responsibilities:
+      "Assist with writing, research, brainstorming, summarizing, and general productivity tasks assigned by the employee.",
+    permissions:
+      "Respond to employee queries within the scope of general workplace assistance. Use connected tools when available.",
+    guardrails:
+      "Do not access or modify company-wide settings. Do not claim admin-level permissions. Stay within the scope of the employee's request.",
+    work_style:
+      "Be helpful, clear, and conversational. Provide actionable answers and ask clarifying questions when needed.",
+  };
+  const agentInfo: AgentInfo = {
+    ...baseInfo,
+    allowed_toolkits: [],
+    allowed_tool_ids: [],
+    workspace: {
+      mode: "chat" as const,
+      objective:
+        "Serve as a general-purpose assistant for employees, helping them get work done efficiently.",
+      primary_deliverables:
+        "Clear answers, drafted content, summaries, and practical support for everyday tasks.",
+      collaboration_notes:
+        "Work as a helpful partner. Keep responses practical and focused on what the employee needs.",
+    },
+  };
+  const systemPrompt = buildAgentContext("Assistant", agentInfo);
+
+  await pool.query(
+    `
+      INSERT INTO ${appSchema}.agents AS existing_agent
+      (
+        id,
+        company_id,
+        created_by_user_id,
+        updated_by_user_id,
+        name,
+        slug,
+        purpose,
+        prompt,
+        role,
+        goal,
+        responsibilities,
+        permissions,
+        guardrails,
+        work_style,
+        agent_info,
+        system_prompt,
+        prompt_version,
+        system_prompt_generated_at,
+        is_system,
+        created_at,
+        updated_at
+      )
+      VALUES
+      (
+        $1, $2, $3, $3, 'Assistant', 'assistant', '', '', $4, $5, $6, $7, $8, $9,
+        $10::jsonb, $11, 1, $12, TRUE, $12, $12
+      )
+      ON CONFLICT (id) DO UPDATE
+      SET
+        company_id = COALESCE(existing_agent.company_id, EXCLUDED.company_id),
+        created_by_user_id = COALESCE(existing_agent.created_by_user_id, EXCLUDED.created_by_user_id),
+        updated_by_user_id = COALESCE(existing_agent.updated_by_user_id, EXCLUDED.updated_by_user_id),
+        slug = COALESCE(NULLIF(existing_agent.slug, ''), EXCLUDED.slug),
+        prompt_version = COALESCE(existing_agent.prompt_version, EXCLUDED.prompt_version),
+        system_prompt_generated_at = COALESCE(
+          existing_agent.system_prompt_generated_at,
+          EXCLUDED.system_prompt_generated_at
+        ),
+        is_system = TRUE,
+        updated_at = existing_agent.updated_at
+    `,
+    [
+      defaultEmployeeAgentId,
+      defaultCompanyId,
+      defaultAdminUserId,
+      agentInfo.role,
+      agentInfo.goal,
+      agentInfo.responsibilities,
+      agentInfo.permissions,
+      agentInfo.guardrails,
+      agentInfo.work_style,
+      JSON.stringify(agentInfo),
+      systemPrompt,
+      now,
+    ],
+  );
+
+  await pool.query(
+    `
+      INSERT INTO ${appSchema}.agent_role_assignments
+      (agent_id, company_id, role_key, created_at)
+      VALUES ($1, $2, 'employee', $3)
+      ON CONFLICT DO NOTHING
+    `,
+    [defaultEmployeeAgentId, defaultCompanyId, now],
+  );
+}
+
 async function protectEditableDefaultAdminAgent(): Promise<void> {
   const appSchema = quoteIdentifier(settings.appSchema);
   const now = new Date();
@@ -844,7 +947,7 @@ export async function connectToPostgres(): Promise<void> {
   if (!initializationPromise) {
     initializationPromise = runMigrations([
       {
-        id: "001_initial_humantouch_schema",
+        id: "001_initial_cemberai_schema",
         run: initializeDatabase,
       },
       {
@@ -862,6 +965,13 @@ export async function connectToPostgres(): Promise<void> {
       {
         id: "005_protect_editable_default_admin_agent",
         run: protectEditableDefaultAdminAgent,
+      },
+      {
+        id: "006_seed_default_employee_agent",
+        run: async () => {
+          const appSchema = quoteIdentifier(settings.appSchema);
+          await seedDefaultEmployeeAgent(appSchema);
+        },
       },
     ]);
   }
