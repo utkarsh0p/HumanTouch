@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: humantouch
+      POSTGRES_DB: cemberdb
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,20 +24,24 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/humantouch
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/cemberdb
     depends_on:
       db:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://147.93.169.144:3001
     restart: unless-stopped
     ports:
       - "3000:3000"
     env_file:
       - .env
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://backend:3001
+      NEXT_PUBLIC_API_BASE_URL: http://147.93.169.144:3001
+      PORT: 3000
     depends_on:
       - backend
 
