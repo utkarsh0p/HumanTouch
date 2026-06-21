@@ -19,6 +19,7 @@ if (existsSync(parentEnvPath)) {
 }
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   reactStrictMode: true,
   outputFileTracingRoot: process.cwd(),
 };
