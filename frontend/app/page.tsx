@@ -1419,7 +1419,7 @@ export default function HomePage() {
       <main className="flex min-h-screen items-center justify-center bg-background text-foreground">
         <div className="rounded-[2rem] border border-white/8 bg-[#211f1b] px-6 py-5 text-center">
           <p className="[font-family:var(--font-display)] text-3xl text-[#ece4d7]">
-            HumanTouch
+            CemberAI
           </p>
           <p className="mt-2 text-sm text-[#9b9386]">Restoring your workspace...</p>
         </div>
@@ -1504,10 +1504,10 @@ export default function HomePage() {
 
           <PromptInputTextarea
             className="min-h-[3.5rem] px-3 py-2.5 text-[0.95rem] leading-6 text-[#f0ebe2] placeholder:text-[#6f695f] sm:min-h-[4rem]"
-            placeholder="Ask something about your work, your agents, or the current task..."
+            placeholder="Ask anything..."
           />
 
-              <PromptInputActions className="flex-col items-stretch gap-2 px-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+              <PromptInputActions className="flex-row items-center justify-between gap-2 px-2 pt-2">
             <div className="flex flex-wrap items-center gap-2.5 text-[0.82rem] text-[#bbb4a7]">
               <PromptInputAction tooltip="Attach files">
                 <label
@@ -1528,7 +1528,7 @@ export default function HomePage() {
               <span className="truncate">{activeAgent?.name ?? (activeSession ? "Archived agent" : "No agent selected")}</span>
             </div>
 
-            <div className="flex items-center justify-between gap-3 sm:justify-end">
+            <div className="flex items-center gap-3">
               <PromptInputAction tooltip={isSending ? "Generating response" : "Send message"}>
                 <Button
                   className="h-9 w-9 rounded-full bg-[#f1ede6] text-[#1a1916] hover:bg-[#fffaf0]"
@@ -2121,15 +2121,16 @@ export default function HomePage() {
                     )}
                   </button>
                   <div className="min-w-0">
-                    <p className="text-[11px] uppercase tracking-[0.26em] text-[#8e8678]">
+                    <p className="hidden text-[11px] uppercase tracking-[0.26em] text-[#8e8678] sm:block">
                       Active workspace
                     </p>
-                    <div className="truncate [font-family:var(--font-display)] text-[1.3rem] leading-none tracking-[-0.03em] text-[#efe7d8] sm:text-[1.45rem]">
+                    <div className="truncate [font-family:var(--font-display)] text-[1.15rem] leading-none tracking-[-0.03em] text-[#efe7d8] sm:text-[1.45rem]">
                       {activeAgentName}
+                      {activeSession ? <span className="sm:hidden text-[0.75rem] font-normal tracking-normal text-[#8e8678]"> — {activeSession.title}</span> : null}
                     </div>
                   </div>
                 </div>
-                <div className="min-w-0 max-w-[52%] pt-0.5 text-right">
+                <div className="hidden min-w-0 max-w-[52%] pt-0.5 text-right sm:block">
                   <p className="text-[10px] uppercase tracking-[0.24em] text-[#8e8678]">
                     Current session
                   </p>

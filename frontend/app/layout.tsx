@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HumanTouch",
-  description: "Admin agent workspace for HumanTouch",
+  title: "CemberAI",
+  description: "Admin agent workspace for CemberAI",
   icons: {
     icon: "/favicon.svg",
   },

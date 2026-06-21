@@ -89,11 +89,11 @@ export function AuthSwitch({
               <form className="ht-auth-form ht-auth-form-signin" onSubmit={handleLoginSubmit}>
                 <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-[#b7afa0]">
                   <Sparkles className="size-3.5 text-[#d97757]" />
-                  HumanTouch Workspace
+                  CemberAI Workspace
                 </div>
                 <h1 className="ht-auth-title">Sign in</h1>
                 <p className="ht-auth-copy">
-                  Sign in to enter HumanTouch and continue working with your assigned agents.
+                  Sign in to enter CemberAI and continue working with your assigned agents.
                 </p>
                 <div className="ht-auth-field">
                   <Mail className="size-4.5 text-[#867d70]" />

@@ -21,7 +21,7 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function getAppSchema(): string {
-  return process.env.APP_DB_SCHEMA ?? "humantouch";
+  return process.env.APP_DB_SCHEMA ?? "cemberai";
 }
 
 function buildDatabaseUrl(): string {

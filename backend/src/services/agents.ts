@@ -26,7 +26,28 @@ type AgentWithAssignments = Prisma.AgentGetPayload<{
   include: typeof agentInclude;
 }>;
 
-const supportedToolkits = new Set(["gmail", "github", "tavily"]);
+export const supportedToolkits = new Set([
+  "gmail",
+  "googlecalendar",
+  "googledocs",
+  "googledrive",
+  "googlesheets",
+  "github",
+  "slack",
+  "notion",
+  "linear",
+  "tavily",
+  "hubspot",
+]);
+
+export const defaultAllowedToolkits = [
+  "gmail",
+  "googlecalendar",
+  "googledocs",
+  "googledrive",
+  "googlesheets",
+  "tavily",
+] as const;
 
 export function toAgentRecord(agent: AgentWithAssignments): AgentRecord {
   const assignedRoles = [

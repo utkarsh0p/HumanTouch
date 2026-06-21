@@ -50,7 +50,7 @@ const envSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(3001),
     DATABASE_URL: z.string().min(1),
-    APP_DB_SCHEMA: z.string().min(1).default("humantouch"),
+    APP_DB_SCHEMA: z.string().min(1).default("cemberai"),
     LANGGRAPH_DB_SCHEMA: z.string().min(1).default("langgraph"),
     GEMINI_API_KEY: z.string().optional(),
     GOOGLE_API_KEY: z.string().optional(),

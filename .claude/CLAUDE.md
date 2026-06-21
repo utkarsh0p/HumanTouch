@@ -2,13 +2,13 @@
 
 ## Project
 
-This project is `HumanTouch`.
+This project is `CemberAI`.
 
 It is a company webapp where an admin can create and manage AI agents for employees.
 
 ## Product Goal
 
-HumanTouch is the product: a focused company agent management app for an admin to create, assign, and manage AI agents for employees.
+CemberAI is the product: a focused company agent management app for an admin to create, assign, and manage AI agents for employees.
 
 The longer-term goal is to make this agent system integration-ready so it can attach to a larger existing business application and reuse that application's backend, users, roles, and PostgreSQL data model.
 
@@ -22,7 +22,7 @@ These markdown files are part of the working project context, but they should be
   Use for local setup, runtime expectations, dev auth notes, migration command notes, and high-level backend/frontend scope.
 - `PROJECT_BRIEF.md`
   Use when the task is about product direction, current product framing, or longer-term integration intent.
-- `SCHEMA.md`
+- `.docs/SCHEMA.md`
   Use when the task touches database design, auth/access modeling, assignments, sessions, or prompt storage.
 - `STYLES.md`
   Use only for frontend visual work, typography, Claude-inspired styling, or UI consistency questions.
@@ -122,20 +122,20 @@ Current UI is implemented:
 
 Provider/account UX:
 
-- keep HumanTouch login identity distinct from connected external provider accounts
-- show the current HumanTouch user email near provider connection controls
+- keep CemberAI login identity distinct from connected external provider accounts
+- show the current CemberAI user email near provider connection controls
 - show each connected provider account as `Connected as <provider email/account id>`
 - use an on/off toggle pattern for provider connections:
   - off/not connected starts the provider OAuth connect flow
   - on/connected disconnects the provider and clears stored tokens
-- do not imply that the HumanTouch login email must match Google, GitHub, or other provider emails
+- do not imply that the CemberAI login email must match Google, GitHub, or other provider emails
 
 ## Architecture Direction
 
 - frontend: Next.js + Tailwind CSS
 - backend: Node.js + TypeScript
 - backend framework: Fastify
-- ORM for HumanTouch product tables: Prisma
+- ORM for CemberAI product tables: Prisma
 - orchestration: LangGraph.js
 - model provider: Google Gemini via environment variable
 - persistence: PostgreSQL
@@ -157,7 +157,7 @@ Keep the backend as a single Node.js service.
 - do not introduce a split backend architecture
 - use Server-Sent Events (SSE) for response streaming
 - use PostgreSQL for chat sessions/history and LangGraph checkpoint persistence
-- use Prisma migrations for HumanTouch product table changes
+- use Prisma migrations for CemberAI product table changes
 - prefer a service/module structure that can later be reused inside a larger backend
 - keep route contracts stable and simple
 - keep auth and authorization separated
@@ -202,13 +202,13 @@ Progress events have: `id`, `title`, `status` (`in-progress` / `completed` / `fa
 
 Keep app login auth separate from connected-account provider integrations.
 
-- HumanTouch auth identifies the app user and owns workspace access, agent permissions, sessions, and company scoping
-- connected-account providers grant external tokens for tools and are owned by the current HumanTouch user
-- Google login uses NextAuth in the frontend and only creates/restores the HumanTouch user session
+- CemberAI auth identifies the app user and owns workspace access, agent permissions, sessions, and company scoping
+- connected-account providers grant external tokens for tools and are owned by the current CemberAI user
+- Google login uses NextAuth in the frontend and only creates/restores the CemberAI user session
 - Google, GitHub, LinkedIn, and Meta in the provider menu are tool integrations, not necessarily login methods
 - backend integration OAuth callbacks store encrypted provider tokens in `connected_accounts`
-- provider accounts may use different emails/usernames than the HumanTouch user; this is expected and allowed
-- frontend integration proxy routes must support both NextAuth users and local `humantouch_session` cookie users
+- provider accounts may use different emails/usernames than the CemberAI user; this is expected and allowed
+- frontend integration proxy routes must support both NextAuth users and local `cemberai_session` cookie users
 - root `.env` is the source of truth for auth/provider secrets; `frontend/.env.local` should only keep frontend-local values like `NEXT_PUBLIC_API_BASE_URL` and `AUTH_URL`
 
 ## Current Non-Goals

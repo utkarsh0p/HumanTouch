@@ -23,7 +23,7 @@ function buildDatabaseUrl(): string {
   }
 
   const url = new URL(databaseUrl);
-  url.searchParams.set("schema", process.env.APP_DB_SCHEMA ?? "humantouch");
+  url.searchParams.set("schema", process.env.APP_DB_SCHEMA ?? "cemberai");
   return url.toString();
 }
 

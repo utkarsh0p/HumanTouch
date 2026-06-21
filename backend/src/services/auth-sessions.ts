@@ -5,7 +5,7 @@ import { prisma } from "../db/prisma.js";
 import { getUserById } from "./users.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 
-const AUTH_COOKIE_NAME = "humantouch_session";
+const AUTH_COOKIE_NAME = "cemberai_session";
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 
